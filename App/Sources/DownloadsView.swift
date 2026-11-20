@@ -11,6 +11,8 @@ struct DownloadsView: View {
     @State private var localFiles: [String] = []
     @State private var showImporter = false
     @State private var importMessage: String?
+    @State private var extracting = false
+    @State private var extractMessage: String?
 
     var body: some View {
         ZStack {
@@ -20,6 +22,7 @@ struct DownloadsView: View {
                     sectionTitle("固件")
                     ipswCard
                     importCard
+                    extractCard
                     sectionTitle("本机文件")
                     if localFiles.isEmpty { emptyCard }
                     else { ForEach(localFiles, id: \.self) { localCard($0) } }
@@ -172,6 +175,78 @@ struct DownloadsView: View {
             .cornerRadius(12)
         }
         .buttonStyle(.plain)
+    }
+
+    /// Pulls kernelcache out of an imported IPSW: zip -> im4p -> LZFSE -> bootkc.
+    private var extractCard: some View {
+        let ipsw = localFiles.first { $0.hasSuffix(".ipsw") }
+        let hasBootkc = FileManager.default.fileExists(
+            atPath: RyLog.documentsURL.appendingPathComponent("bootkc").path)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Button {
+                guard let name = ipsw else { return }
+                extractBootkc(name)
+            } label: {
+                HStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(Theme.iconBoot)
+                        .frame(width: 29, height: 29)
+                        .overlay(Image(systemName: "cpu")
+                            .font(.system(size: 13, weight: .semibold)).foregroundColor(.white))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("从 IPSW 提取内核").font(.system(size: 14, weight: .medium))
+                            .foregroundColor(Theme.text)
+                        Text(extractMessage
+                             ?? (ipsw == nil
+                                 ? "先导入或下载一个 .ipsw"
+                                 : "解出 kernelcache → bootkc"))
+                            .font(.system(size: 11))
+                            .foregroundColor(extractMessage == nil ? Theme.textMuted : Theme.ok)
+                    }
+                    Spacer()
+                    if extracting {
+                        ProgressView().scaleEffect(0.8)
+                    } else if hasBootkc {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(Theme.ok)
+                    }
+                }
+                .padding(14)
+                .background(Theme.surface)
+                .cornerRadius(12)
+            }
+            .buttonStyle(.plain)
+            .disabled(ipsw == nil || extracting)
+            .opacity(ipsw == nil ? 0.55 : 1)
+        }
+    }
+
+    private func extractBootkc(_ ipswName: String) {
+        extracting = true
+        extractMessage = "正在解压…"
+        let docs = RyLog.documentsURL
+        let src = docs.appendingPathComponent(ipswName)
+        let out = docs.appendingPathComponent("bootkc")
+
+        RyLog.log("ipsw", "extracting kernelcache from \(ipswName)", level: .info)
+        DispatchQueue.global(qos: .userInitiated).async {
+            var bytes: UInt64 = 0
+            var detail = [CChar](repeating: 0, count: 256)
+            let rc = src.path.withCString { sp in
+                out.path.withCString { op in
+                    ry_ipsw_extract_bootkc(sp, op, &bytes, &detail, detail.count)
+                }
+            }
+            let message = String(cString: detail)
+            DispatchQueue.main.async {
+                extracting = false
+                extractMessage = rc == 0 ? message : "失败：\(message)"
+                RyLog.log("ipsw", rc == 0 ? "bootkc ready: \(message)" : "extract failed: \(message)",
+                          level: rc == 0 ? .info : .error)
+                scanLocal()
+            }
+        }
     }
 
     private var emptyCard: some View {

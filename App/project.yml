@@ -28,6 +28,8 @@ settings:
     OTHER_LDFLAGS:
       - "$(inherited)"
       - "-lz"
+      # LZFSE decoding for the IPSW kernelcache payload.
+      - "-lcompression"
     GCC_PREPROCESSOR_DEFINITIONS:
       - "$(inherited)"
       - "RY_HAVE_JIT=1"
