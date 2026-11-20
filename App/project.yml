@@ -28,6 +28,12 @@ settings:
     OTHER_LDFLAGS:
       - "$(inherited)"
       - "-lz"
+    GCC_PREPROCESSOR_DEFINITIONS:
+      - "$(inherited)"
+      - "RY_HAVE_JIT=1"
+    GCC_PREPROCESSOR_DEFINITIONS:
+      - "$(inherited)"
+      - "RY_HAVE_JIT=1"
 
 targets:
   iOSoniOS:
@@ -40,6 +46,15 @@ targets:
           - "iOSoniOS.entitlements"
       - path: Assets.xcassets
         buildPhase: resources
+      # Henge's arm64 JIT engine (core/ + the assembly entry). RY_HAVE_JIT=1
+      # enables the JIT backend in ry_engine.c; it only initialises when a
+      # debugger is attached, since touching JIT memory without permission
+      # kills the process outright.
+      - path: ../Henge-main/core
+        includes:
+          - "*.c"
+      - path: ../Henge-main/host/jit_region.c
+      - path: ../Henge-main/host/enter.S
     entitlements:
       path: Sources/iOSoniOS.entitlements
     dependencies: []

@@ -32,6 +32,7 @@ final class BootEngine: ObservableObject {
     private var guestRAM: UnsafeMutableRawPointer?
     private var guestRAMSize = 0
     private var engineReady = false
+    private var engineBackend: Int32 = 0
 
     private let ramMB: Int
     private let cpuCount: Int
@@ -107,14 +108,19 @@ final class BootEngine: ObservableObject {
 
     private func reserveGuestRAM() async {
         let bytes = UInt64(ramMB) * 1024 * 1024
+        // Only ask for the JIT when a debugger is attached: touching JIT memory
+        // without permission kills the process instead of returning an error.
+        // 2 = JIT, 1 = interpreter (mirrors RY_BACKEND_* in ry_engine.h)
+        let backend: Int32 = DebugCapability.jitAvailable ? 2 : 1
+
         var status = RyEngineStatus()
-        let jitBytes = UInt64(256) * 1024 * 1024
-        let rc = ry_engine_init(bytes, jitBytes, &status)
+        let rc = ry_engine_init(bytes, backend, &status)
         let detail = String(cString: ry_engine_detail(&status))
         if rc == 0 {
-            append("引擎初始化成功：RAM \(ramMB) MiB + JIT 256 MiB", .ok)
-            append(detail, .info)
+            let name = status.backend == 2 ? "JIT" : "解释器"
+            append("\(name)引擎就绪：\(detail)", .ok)
             engineReady = true
+            engineBackend = status.backend
         } else {
             append("引擎初始化失败 (rc=\(rc), stage=\(status.stage))：\(detail)", .error)
         }
