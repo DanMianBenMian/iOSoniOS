@@ -18,6 +18,8 @@ settings:
     GENERATE_INFOPLIST_FILE: NO
     TARGETED_DEVICE_FAMILY: "1,2"
     SWIFT_OBJC_BRIDGING_HEADER: "Sources/iOSoniOS-Bridging-Header.h"
+    ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
+    ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
     HEADER_SEARCH_PATHS:
       - "$(SRCROOT)/../Henge-main/core"
       - "$(SRCROOT)/../Henge-main/host"
@@ -37,7 +39,7 @@ targets:
           - "Info.plist"
           - "iOSoniOS.entitlements"
       - path: Assets.xcassets
-        type: folder
+        buildPhase: resources
     entitlements:
       path: Sources/iOSoniOS.entitlements
     dependencies: []
