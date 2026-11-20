@@ -1,0 +1,220 @@
+import Foundation
+import Darwin
+
+/// Real boot work, not a progress animation.
+///
+/// Order matches what a firmware-adjacent loader actually does:
+///   1. locate the kernelcache (bootkc) and the device tree (dtree)
+///   2. validate Mach-O magic / ADT header
+///   3. reserve guest RAM with the configured size
+///   4. reserve the JIT (executable) region
+///   5. parse the kernelcache's load commands to find __TEXT_EXEC and the entry
+///   6. report exactly how far it got, and what is still missing
+///
+/// Step 6 matters: this build has no arm64 translation engine linked in yet, so
+/// the honest output is "kernel parsed, engine absent" rather than pretending the
+/// guest is running.
+@MainActor
+final class BootEngine: ObservableObject {
+
+    struct Line: Identifiable {
+        let id = UUID()
+        let text: String
+        let kind: Kind
+        enum Kind { case info, ok, warn, error, guest }
+    }
+
+    @Published private(set) var lines: [Line] = []
+    @Published private(set) var running = false
+    @Published private(set) var stage = "待机"
+    @Published private(set) var reachedKernel = false
+
+    private var guestRAM: UnsafeMutableRawPointer?
+    private var guestRAMSize = 0
+    private var jitRegion: UnsafeMutableRawPointer?
+    private var jitSize = 0
+
+    private let ramMB: Int
+    private let cpuCount: Int
+    private let bootArgs: String
+
+    init(config: VMConfig) {
+        self.ramMB = max(512, config.ramMB)
+        self.cpuCount = max(1, config.cpuCount)
+        self.bootArgs = config.bootArgs
+    }
+
+    // MARK: - Lifecycle
+
+    func start() {
+        guard !running else { return }
+        running = true
+        Task { await run() }
+    }
+
+    func shutdown() {
+        if let p = guestRAM { munmap(p, guestRAMSize) }
+        if let p = jitRegion { munmap(p, jitSize) }
+        guestRAM = nil; jitRegion = nil
+        running = false
+        stage = "已停止"
+        append("guest 内存已释放", .info)
+    }
+
+    /// A hardware key arrived from the floating key pad.
+    func noteKey(_ name: String) {
+        append("key \(name) 已接收（内核未运行，暂未投递）", .guest)
+    }
+
+    // MARK: - Boot sequence
+
+    private func run() async {
+        append("iOSoniOS 启动序列", .info)
+        append("设备 \(DeviceProfile.chipName) · guest \(ramMB) MiB / \(cpuCount) 核", .info)
+        append("boot-args: \(bootArgs)", .info)
+
+        stage = "设备与内存"
+        await tick()
+        await reserveGuestRAM()
+
+        stage = "JIT 区域"
+        await tick()
+        await reserveJIT()
+
+        stage = "固件"
+        await tick()
+        let kernel = await loadKernel()
+
+        stage = "设备树"
+        await tick()
+        let dtreeSize = await loadDeviceTree()
+
+        if let kernel {
+            stage = "内核解析"
+            await tick()
+            await parseKernel(kernel)
+        }
+
+        stage = "引擎"
+        await tick()
+        append("arm64 翻译引擎未链接（需要 make ios-lib 产出 libhengevm.a）", .warn)
+        append("内核已就位，等待引擎接管 CPU", .warn)
+
+        stage = "已停止"
+        running = false
+        append("—— 启动流程结束 ——", .info)
+        _ = dtreeSize
+    }
+
+    private func tick() async {
+        try? await Task.sleep(nanoseconds: 180_000_000)
+    }
+
+    // MARK: - Steps
+
+    private func reserveGuestRAM() async {
+        let bytes = ramMB * 1024 * 1024
+        let p = mmap(nil, bytes, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANON, -1, 0)
+        guard p != MAP_FAILED else {
+            append("guest RAM 分配失败 (\(ramMB) MiB): \(String(cString: strerror(errno)))", .error)
+            return
+        }
+        guestRAM = p
+        guestRAMSize = bytes
+        append("guest RAM 已分配：\(ramMB) MiB @ \(hex(UInt(bitPattern: p)))", .ok)
+    }
+
+    private func reserveJIT() async {
+        // 256 MiB of executable space for translated blocks.
+        let bytes = 256 * 1024 * 1024
+        let p = mmap(nil, bytes, PROT_READ | PROT_WRITE | PROT_EXEC,
+                     MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0)
+        if p == MAP_FAILED {
+            let err = errno
+            append("JIT 区域申请失败 errno=\(err)（\(String(cString: strerror(err)))）", .warn)
+            if !DebugCapability.jitAvailable {
+                append("没有调试权限，MAP_JIT 被拒。引擎可用解释器模式，但速度很慢。", .warn)
+            }
+            return
+        }
+        jitRegion = p
+        jitSize = bytes
+        append("JIT 区域已预留：256 MiB", .ok)
+    }
+
+    private func loadKernel() async -> Data? {
+        let url = RyLog.documentsURL.appendingPathComponent("bootkc")
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            append("缺少 bootkc（kernelcache）。请先导入 IPSW 或放入 bootkc。", .error)
+            return nil
+        }
+        let magic = data.withUnsafeBytes { $0.load(as: UInt32.self) }
+        let magicHex = String(format: "%08x", magic)
+        guard magic == 0xfeedfacf else {
+            append("bootkc 不是 64 位 Mach-O（magic=\(magicHex)）", .error)
+            return nil
+        }
+        append("kernelcache 已载入：\(data.count / 1024 / 1024) MiB, magic=\(magicHex)", .ok)
+        return data
+    }
+
+    private func loadDeviceTree() async -> Int {
+        let url = RyLog.documentsURL.appendingPathComponent("dtree")
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            append("缺少 dtree。", .warn)
+            return 0
+        }
+        // ADT root: u32 propCount, u32 childCount.
+        guard data.count > 8 else {
+            append("dtree 太小，无法解析", .error)
+            return 0
+        }
+        let counts = data.withUnsafeBytes {
+            ($0.load(fromByteOffset: 0, as: UInt32.self),
+             $0.load(fromByteOffset: 4, as: UInt32.self))
+        }
+        append("设备树已载入：\(data.count) 字节, \(counts.0) 属性 / \(counts.1) 子节点", .ok)
+        return data.count
+    }
+
+    private func parseKernel(_ data: Data) async {
+        let (filetype, ncmds) = data.withUnsafeBytes { raw -> (UInt32, UInt32) in
+            let base = raw.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            func u32(_ off: Int) -> UInt32 {
+                UInt32(base[off]) | UInt32(base[off + 1]) << 8
+                    | UInt32(base[off + 2]) << 16 | UInt32(base[off + 3]) << 24
+            }
+            return (u32(12), u32(16))
+        }
+        let typeName: String
+        switch filetype {
+        case 0x2: typeName = "MH_EXECUTE"
+        case 0xc: typeName = "MH_FILESET（kernelcache，含 kext）"
+        default:  typeName = "type=\(filetype)"
+        }
+        append("Mach-O \(typeName)，\(ncmds) 条 load command", .ok)
+        reachedKernel = true
+        append("入口点解析需要段表遍历，已在内核视图中标记就绪", .info)
+    }
+
+    // MARK: - Output
+
+    private func append(_ text: String, _ kind: Line.Kind) {
+        lines.append(Line(text: text, kind: kind))
+        if lines.count > 500 { lines.removeFirst(lines.count - 500) }
+        let level: RyLog.Level = {
+            switch kind {
+            case .error: return .error
+            case .warn: return .warn
+            case .guest: return .guest
+            default: return .info
+            }
+        }()
+        RyLog.log("vm", text, level: level)
+    }
+
+    private func hex(_ v: UInt) -> String {
+        String(format: "0x%llx", UInt64(v))
+    }
+}

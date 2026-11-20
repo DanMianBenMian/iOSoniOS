@@ -4,6 +4,7 @@ struct ContentView: View {
     @State private var config: VMConfig? = VMConfig.load()
     @State private var showConfig = false
     @State private var showSettings = false
+    @State private var bootVM: VMConfig?
 
     var body: some View {
         Group {
@@ -11,7 +12,14 @@ struct ContentView: View {
                 NavigationStack {
                     MainView(config: cfg,
                              onReconfigure: { showConfig = true },
-                             onSettings: { showSettings = true })
+                             onSettings: { showSettings = true },
+                             onStart: { bootVM = cfg })
+                    .navigationDestination(isPresented: Binding(
+                        get: { bootVM != nil },
+                        set: { if !$0 { bootVM = nil } }
+                    )) {
+                        if let vm = bootVM { VMView(config: vm) }
+                    }
                 }
                 .sheet(isPresented: $showConfig) {
                     ConfigView(config: cfg) { newConfig in
@@ -20,18 +28,16 @@ struct ContentView: View {
                     }
                 }
                 .sheet(isPresented: $showSettings) {
-                    if var cfg = config {
-                        SettingsView(config: Binding(
-                            get: { cfg },
-                            set: { cfg = $0; config = $0 }
-                        )) { showSettings = false }
-                    }
+                    SettingsView(config: Binding(
+                        get: { cfg },
+                        set: { config = $0 }
+                    )) { showSettings = false }
                 }
             } else {
-                ConfigView { cfg in config = cfg }
+                ConfigView { config = $0 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 }
 
@@ -39,17 +45,20 @@ struct MainView: View {
     let config: VMConfig
     let onReconfigure: () -> Void
     let onSettings: () -> Void
+    let onStart: () -> Void
 
     @State private var vramMB: Int = 0
+
+    private var vramLow: Bool { vramMB < DeviceProfile.lowVRAMThresholdMB }
 
     var body: some View {
         ZStack {
             Theme.canvas.ignoresSafeArea()
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 20) {
                     header
                     specCard
-                    startLink
+                    startButton
                     secondaryActions
                 }
                 .padding(20)
@@ -57,7 +66,6 @@ struct MainView: View {
         }
         .navigationTitle(config.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { onSettings() } label: {
@@ -65,70 +73,63 @@ struct MainView: View {
                 }
             }
         }
-        .onAppear { vramMB = DeviceProfile.estimatedVRAMMB(ramGB: Double(config.ramMB)/1024, cpuCores: config.cpuCount) }
+        .onAppear {
+            vramMB = DeviceProfile.estimatedVRAMMB(ramGB: Double(config.ramMB) / 1024,
+                                                   cpuCores: config.cpuCount)
+        }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("虚拟机就绪").font(.system(size: 26, weight: .semibold))
+        VStack(alignment: .leading, spacing: 6) {
+            Text(config.name).font(.system(size: 28, weight: .semibold))
                 .foregroundColor(Theme.text)
-            Text("点 Start 进入启动会话，进度和日志会实时显示")
-                .font(.system(size: 12)).foregroundColor(Theme.textMuted)
+            Text("\(config.ramMB / 1024) GiB · \(config.cpuCount) 核 · 显存 \(vramMB) MB")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(Theme.textMuted)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var specCard: some View {
         VStack(spacing: 10) {
             SettingRow(icon: "memorychip.fill", title: "内存", iconColor: Theme.iconMemory) {
-                HStack(spacing: 2) {
-                    RollingNumber(value: String(format: "%.1f", Double(config.ramMB)/1024))
-                    Text("GiB").font(.system(size: 11)).foregroundColor(Theme.textMuted)
-                }
+                Text("\(config.ramMB / 1024) GiB")
+                    .font(.system(size: 13, design: .monospaced)).foregroundColor(Theme.textMuted)
             }
             SettingRow(icon: "cpu.fill", title: "CPU 核心", iconColor: Theme.iconCPU) {
-                RollingNumber(value: "\(config.cpuCount)")
+                Text("\(config.cpuCount)")
+                    .font(.system(size: 13, design: .monospaced)).foregroundColor(Theme.textMuted)
             }
             SettingRow(icon: "rectangle.3.group.fill", title: "显存",
-                       subtitle: vramMB < DeviceProfile.lowVRAMThresholdMB
-                           ? "内存占用高，显存已被压缩"
-                           : "与内存共享同一预算",
-                       iconColor: vramMB < DeviceProfile.lowVRAMThresholdMB ? Theme.warn : Theme.iconVRAM) {
-                HStack(spacing: 2) {
-                    RollingNumber(value: "\(vramMB)",
-                                  color: vramMB < DeviceProfile.lowVRAMThresholdMB ? Theme.warn : Theme.text)
-                    Text("MB").font(.system(size: 11)).foregroundColor(Theme.textMuted)
-                }
+                       iconColor: vramLow ? Theme.warn : Theme.iconVRAM) {
+                Text("\(vramMB) MB")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundColor(vramLow ? Theme.warn : Theme.textMuted)
             }
             SettingRow(icon: "rectangle.on.rectangle.fill", title: "分辨率", iconColor: Theme.iconRes) {
                 Text("\(config.width)×\(config.height)")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(Theme.textMuted)
+                    .font(.system(size: 12, design: .monospaced)).foregroundColor(Theme.textMuted)
             }
             SettingRow(icon: "ant.fill", title: "JIT",
-                       subtitle: DebugCapability.jitAvailable
-                           ? "已检测到调试权限"
-                           : "未检测到调试权限，已禁用",
+                       subtitle: DebugCapability.jitAvailable ? nil : "无调试权限",
                        iconColor: (DebugCapability.jitAvailable && config.enableJIT)
                            ? Theme.iconJIT : Theme.textFaint) {
                 Text(DebugCapability.jitAvailable ? (config.enableJIT ? "开" : "关") : "不可用")
                     .font(.system(size: 12))
                     .foregroundColor(DebugCapability.jitAvailable ? Theme.textMuted : Theme.warn)
             }
-            .opacity(DebugCapability.jitAvailable ? 1 : 0.55)
+            .opacity(DebugCapability.jitAvailable ? 1 : 0.6)
         }
     }
 
-    private var startLink: some View {
-        NavigationLink {
-            SessionView(config: config)
-        } label: {
-            HStack(spacing: 10) {
+    private var startButton: some View {
+        Button(action: onStart) {
+            HStack(spacing: 8) {
                 Image(systemName: "play.fill")
-                Text("Start").font(.system(size: 15, weight: .semibold))
+                Text("Start").font(.system(size: 16, weight: .semibold))
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 15)
-            .foregroundColor(Theme.canvas)
         }
         .nativeButton(prominent: true)
     }
@@ -138,21 +139,15 @@ struct MainView: View {
             NavigationLink {
                 DownloadsView()
             } label: {
-                Label("下载", systemImage: "arrow.down.circle")
+                Label("固件", systemImage: "arrow.down.circle")
                     .font(.system(size: 12))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-            }
-            .nativeButton()
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+            }.nativeButton()
 
-            // Settings lives in the navigation-bar gear; this row is edit-config only.
-            Button {
-                onReconfigure()
-            } label: {
-                Label("编辑配置", systemImage: "slider.horizontal.3")
+            Button(action: onReconfigure) {
+                Label("配置", systemImage: "slider.horizontal.3")
                     .font(.system(size: 12))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
             }.nativeButton()
         }
     }

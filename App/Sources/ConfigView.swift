@@ -56,7 +56,6 @@ struct ConfigView: View {
             }
             .navigationTitle("配置虚拟机")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -82,16 +81,16 @@ struct ConfigView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("新建虚拟机").font(.system(size: 26, weight: .semibold))
+            Text("新建虚拟机").font(.system(size: 28, weight: .semibold))
                 .foregroundColor(Theme.text)
-            Text("填好后点右上角 ✓ 创建")
+            Text("右上角 ✓ 创建")
                 .font(.system(size: 12)).foregroundColor(Theme.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var nameCard: some View {
-        SettingRow(icon: "tag.fill", title: "名称", subtitle: "给这台虚拟机起个名字",
+        SettingRow(icon: "tag.fill", title: "名称", subtitle: nil,
                    iconColor: Theme.iconName) {
             TextField("我的 iOS", text: $config.name)
                 .font(.system(size: 13))
@@ -103,7 +102,7 @@ struct ConfigView: View {
 
     private var ramCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SettingRow(icon: "memorychip.fill", title: "内存", subtitle: "分配给 guest 的运行内存",
+            SettingRow(icon: "memorychip.fill", title: "内存", subtitle: nil,
                        iconColor: Theme.iconMemory) {
                 HStack(spacing: 2) {
                     RollingNumber(value: String(format: "%.1f", ramGB),
@@ -138,7 +137,7 @@ struct ConfigView: View {
     private var cpuCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             SettingRow(icon: "cpu.fill", title: "CPU 核心",
-                       subtitle: "本机 \(DeviceProfile.physicalCores) 核，guest 用 \(cores) 核",
+                       subtitle: "本机 \(DeviceProfile.physicalCores) 核",
                        iconColor: Theme.iconCPU) {
                 RollingNumber(value: "\(cores)")
             }
@@ -153,7 +152,7 @@ struct ConfigView: View {
 
     private var vramCard: some View {
         SettingRow(icon: "rectangle.3.group.fill", title: "显存",
-                   subtitle: "与内存共享预算，内存越高显存越低",
+                   subtitle: "与内存共享预算",
                    iconColor: vramLow ? Theme.warn : Theme.iconVRAM) {
             HStack(spacing: 4) {
                 RollingNumber(value: "\(vramMB)", color: vramLow ? Theme.warn : Theme.text)
@@ -165,7 +164,7 @@ struct ConfigView: View {
     private var displayCard: some View {
         VStack(spacing: 10) {
             SettingRow(icon: "rectangle.on.rectangle.fill", title: "分辨率",
-                       subtitle: "guest 屏幕尺寸", iconColor: Theme.iconRes) {
+                       subtitle: nil, iconColor: Theme.iconRes) {
                 Picker("", selection: Binding(
                     get: { Resolution(width: config.width, height: config.height) },
                     set: { config.width = $0.width; config.height = $0.height }
@@ -179,7 +178,7 @@ struct ConfigView: View {
                 .frame(maxWidth: 150)
             }
             SettingRow(icon: "display", title: "图形显示",
-                       subtitle: "是否启用虚拟屏幕", iconColor: Theme.iconDisplay) {
+                       subtitle: nil, iconColor: Theme.iconDisplay) {
                 Toggle("", isOn: $config.enableDisplay).labelsHidden().tint(Theme.accent)
             }
         }
@@ -187,7 +186,7 @@ struct ConfigView: View {
 
     private var advancedCard: some View {
         SettingRow(icon: "terminal.fill", title: "启动参数",
-                   subtitle: "传给内核的 boot-args", iconColor: Theme.iconBoot) {
+                   subtitle: "boot-args", iconColor: Theme.iconBoot) {
             TextField("-v", text: $config.bootArgs)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(Theme.text)
@@ -198,9 +197,7 @@ struct ConfigView: View {
 
     private var firmwareCard: some View {
         SettingRow(icon: "shippingbox.fill", title: "固件",
-                   subtitle: existingIPSW() != nil
-                       ? "已放入 \(existingIPSW() ?? "")"
-                       : "创建前需要导入 IPSW（测试版可跳过）",
+                   subtitle: existingIPSW() != nil ? (existingIPSW() ?? "") : "未导入（测试版可跳过）",
                    iconColor: Theme.iconFirmware) {
             NavigationLink {
                 DownloadsView()

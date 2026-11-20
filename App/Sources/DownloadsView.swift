@@ -30,7 +30,6 @@ struct DownloadsView: View {
         }
         .navigationTitle("下载")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear(perform: scanLocal)
         .onChange(of: downloader.phase) { phase in
             if case .finished = phase { scanLocal() }

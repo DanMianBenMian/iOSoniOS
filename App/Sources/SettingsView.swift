@@ -48,7 +48,7 @@ struct SettingsView: View {
                             HStack(spacing: 10) {
                                 Image(systemName: "questionmark.circle")
                                     .foregroundColor(Theme.textMuted)
-                                Text("JIT 为什么需要调试器？")
+                                Text("为什么需要调试器")
                                     .font(.system(size: 12)).foregroundColor(Theme.textMuted)
                                 Spacer()
                                 Image(systemName: jitExplanation ? "chevron.up" : "chevron.down")
@@ -58,7 +58,7 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
 
                         if jitExplanation {
-                            Text("iOS 只允许带调试权限的进程申请可执行内存。当前用分发证书签名时，mmap 可能成功但执行会被系统拦截；换成开发者签名并附加 StikDebug 后才能真正跑 JIT。本 App 的安全探测不会执行代码，所以不会闪退。")
+                            Text("iOS 只给被调试的进程可执行内存。分发证书下 mmap 可能成功但执行会被拦；用开发者签名 + StikDebug 附加后可用。本 App 的探测不执行代码，不会闪退。")
                                 .font(.system(size: 11)).foregroundColor(Theme.textMuted)
                                 .transition(.opacity.combined(with: .move(edge: .top)))
                         }
@@ -91,7 +91,6 @@ struct SettingsView: View {
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("完成") {

@@ -58,7 +58,6 @@ struct LogView: View {
         }
         .navigationTitle("日志")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showShare = true } label: {
