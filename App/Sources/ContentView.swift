@@ -95,7 +95,7 @@ struct BootView: View {
                                     .foregroundColor(.secondary)
                                 Text(e.message)
                                     .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(color(for: e.level))
+                                    .foregroundColor(logColor(for: e.level))
                                     .textSelection(.enabled)
                             }
                             .id(e.id)
@@ -210,7 +210,7 @@ struct BootView: View {
         }
     }
 
-    private func color(for level: String) -> Color {
+    private func logColor(for level: String) -> Color {
         switch level {
         case "error": return .red
         case "warn": return .orange
