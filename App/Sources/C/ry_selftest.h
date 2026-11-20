@@ -17,6 +17,8 @@ typedef struct {
 extern "C" {
 #endif
 void ry_selftest_run(RySelfTestResult *out);
+/* NUL-terminated detail string, safe to hand to String(cString:). */
+const char *ry_selftest_detail(const RySelfTestResult *out);
 #ifdef __cplusplus
 }
 #endif

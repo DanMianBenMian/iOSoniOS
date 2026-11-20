@@ -101,3 +101,7 @@ void ry_selftest_run(RySelfTestResult *out) {
     signal(SIGABRT, old_abrt);
     munmap(p, map_len);
 }
+
+const char *ry_selftest_detail(const RySelfTestResult *out) {
+    return out->detail;
+}
