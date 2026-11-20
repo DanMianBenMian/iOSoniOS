@@ -108,7 +108,7 @@ static int find_kernel_entry(FILE *f, uint64_t cd_offset, uint64_t entries,
                      | ((uint32_t)hdr[2] << 16) | ((uint32_t)hdr[3] << 24);
         if (sig != CEN_SIG) return -1;
 
-        uint16_t method = (uint16_t)(hdr[10] | (hdr[11] << 8));
+        uint16_t entry_method = (uint16_t)(hdr[10] | (hdr[11] << 8));
         uint32_t csize = (uint32_t)hdr[20] | ((uint32_t)hdr[21] << 8)
                        | ((uint32_t)hdr[22] << 16) | ((uint32_t)hdr[23] << 24);
         uint32_t usize = (uint32_t)hdr[24] | ((uint32_t)hdr[25] << 8)
@@ -170,7 +170,7 @@ static int find_kernel_entry(FILE *f, uint64_t cd_offset, uint64_t entries,
             *local_off = local;
             *comp_size = cs;
             *uncomp_size = us;
-            *method = method;
+            *method = entry_method;
             return 0;
         }
     }
@@ -326,16 +326,6 @@ int ry_ipsw_extract_bootkc(const char *ipsw_path, const char *out_path,
         if (image) { memcpy(image, pay, pay_len); image_len = pay_len; }
     } else if (pay_len >= 4 && memcmp(pay, "bvx2", 4) == 0) {
         image = lzfse_decode(pay, pay_len, &image_len);
-    } else if (pay_len >= 4 && memcmp(pay, "bvx1", 4) == 0) {
-        size_t cap = 64ull << 20;
-        for (int a = 0; a < 4 && !image; a++) {
-            uint8_t *dst = (uint8_t *)malloc(cap);
-            if (!dst) break;
-            size_t n = compression_decode_buffer(dst, cap, pay, pay_len, NULL,
-                                                 COMPRESSION_LZVN);
-            if (n > 0 && n < cap) { image = dst; image_len = n; }
-            else { free(dst); cap *= 2; }
-        }
     }
     free(im4p);
 
