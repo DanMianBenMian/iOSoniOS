@@ -1,6 +1,8 @@
 #ifndef RY_SELFTEST_H
 #define RY_SELFTEST_H
 
+#include <stdint.h>
+
 typedef struct {
     int jit_ok;
     int page_size;
