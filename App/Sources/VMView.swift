@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// The running-VM surface: pure black, no chrome from the host app, a floating
-/// key strip, and the guest's own console output.
+/// The running-VM surface: pure black, minimal chrome, a collapsible floating
+/// key cluster in Liquid Glass, and the guest's own console output.
 struct VMView: View {
     let config: VMConfig
     @StateObject private var engine: BootEngine
     @Environment(\.dismiss) private var dismiss
 
-    @State private var keysVisible = true
+    @State private var keysExpanded = false      // collapsed by default
     @State private var showLog = true
 
     init(config: VMConfig) {
@@ -24,15 +24,14 @@ struct VMView: View {
                 console
             }
 
-            // Floating keys, bottom-right, the way a VM app usually places them.
             VStack {
                 Spacer()
                 HStack {
                     Spacer()
-                    if keysVisible { keyPad }
+                    keyCluster
                 }
                 .padding(.trailing, 18)
-                .padding(.bottom, 26)
+                .padding(.bottom, 24)
             }
         }
         .statusBarHidden(true)
@@ -47,37 +46,22 @@ struct VMView: View {
         HStack(spacing: 12) {
             Circle()
                 .fill(engine.running ? Theme.VM.accent : Theme.VM.textFaint)
-                .frame(width: 7, height: 7)
+                .frame(width: 6, height: 6)
             Text(engine.stage)
                 .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(Theme.VM.textDim)
+                .foregroundColor(Theme.VM.textFaint)
             Spacer()
-            Button {
+            glassIcon(showLog ? "text.alignleft" : "text.alignleft", active: showLog) {
                 withAnimation(.easeOut(duration: 0.2)) { showLog.toggle() }
-            } label: {
-                Image(systemName: showLog ? "text.alignleft" : "text.alignleft")
-                    .font(.system(size: 13))
-                    .foregroundColor(showLog ? Theme.VM.accent : Theme.VM.textFaint)
             }
-            Button {
-                withAnimation(.easeOut(duration: 0.2)) { keysVisible.toggle() }
-            } label: {
-                Image(systemName: "circle.grid.cross")
-                    .font(.system(size: 13))
-                    .foregroundColor(keysVisible ? Theme.VM.accent : Theme.VM.textFaint)
-            }
-            Button {
+            glassIcon("xmark", active: false) {
                 engine.shutdown()
                 dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Theme.VM.textDim)
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
     }
 
     // MARK: - Console
@@ -96,7 +80,7 @@ struct VMView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 120)
+                .padding(.bottom, 140)
             }
             .opacity(showLog ? 1 : 0)
             .onChange(of: engine.lines.count) { _ in
@@ -109,40 +93,81 @@ struct VMView: View {
         }
     }
 
-    // MARK: - Floating keys
+    // MARK: - Floating key cluster (collapsed by default)
 
-    private var keyPad: some View {
-        VStack(spacing: 8) {
-            keyButton("speaker.plus.fill", "音量加") { press(.volumeUp) }
-            keyButton("speaker.minus.fill", "音量减") { press(.volumeDown) }
-            keyButton("house.fill", "Home") { press(.home) }
-            keyButton("power", "电源") { press(.power) }
+    @ViewBuilder
+    private var keyCluster: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 10) {
+                clusterBody
+            }
+        } else {
+            clusterBody
         }
-        .padding(8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Theme.VM.keyStroke, lineWidth: 0.5)
-        )
     }
 
-    private func keyButton(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private var clusterBody: some View {
+        VStack(spacing: 10) {
+            if keysExpanded {
+                keyButton("speaker.plus.fill", "音量加") { press(.volumeUp) }
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                keyButton("speaker.minus.fill", "音量减") { press(.volumeDown) }
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                keyButton("house.fill", "Home") { press(.home) }
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                keyButton("power", "电源") { press(.power) }
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
+            keyButton(keysExpanded ? "xmark" : "circle.grid.cross.fill",
+                      keysExpanded ? "收起按键" : "展开按键") {
+                withAnimation(.easeOut(duration: 0.24)) { keysExpanded.toggle() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func keyButton(_ icon: String, _ label: String,
+                           action: @escaping () -> Void) -> some View {
+        let base = Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 15, weight: .medium))
                 .foregroundColor(Theme.VM.text)
-                .frame(width: 44, height: 44)
-                .background(Theme.VM.keyFill, in: Circle())
+                .frame(width: 46, height: 46)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+
+        if #available(iOS 26.0, *) {
+            base.glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            base.background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().stroke(Theme.VM.keyStroke, lineWidth: 0.5))
+        }
+    }
+
+    @ViewBuilder
+    private func glassIcon(_ icon: String, active: Bool,
+                           action: @escaping () -> Void) -> some View {
+        let base = Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(active ? Theme.VM.accent : Theme.VM.textDim)
+                .frame(width: 30, height: 30)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+
+        if #available(iOS 26.0, *) {
+            base.glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            base.background(.ultraThinMaterial, in: Circle())
+        }
     }
 
     private enum GuestKey { case volumeUp, volumeDown, home, power }
 
     private func press(_ key: GuestKey) {
-        // Guest input is not wired to a running kernel yet; echo it so the log
-        // shows the plumbing is live.
         let name: String
         switch key {
         case .volumeUp:   name = "volume_up"
@@ -150,7 +175,6 @@ struct VMView: View {
         case .home:       name = "home"
         case .power:      name = "power"
         }
-        RyLog.log("vm", "key \(name)", level: .guest)
         engine.noteKey(name)
     }
 

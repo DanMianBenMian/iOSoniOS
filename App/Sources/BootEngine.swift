@@ -31,8 +31,7 @@ final class BootEngine: ObservableObject {
 
     private var guestRAM: UnsafeMutableRawPointer?
     private var guestRAMSize = 0
-    private var jitRegion: UnsafeMutableRawPointer?
-    private var jitSize = 0
+    private var engineReady = false
 
     private let ramMB: Int
     private let cpuCount: Int
@@ -53,12 +52,11 @@ final class BootEngine: ObservableObject {
     }
 
     func shutdown() {
-        if let p = guestRAM { munmap(p, guestRAMSize) }
-        if let p = jitRegion { munmap(p, jitSize) }
-        guestRAM = nil; jitRegion = nil
+        ry_engine_shutdown()
+        engineReady = false
         running = false
         stage = "已停止"
-        append("guest 内存已释放", .info)
+        append("引擎已释放", .info)
     }
 
     /// A hardware key arrived from the floating key pad.
@@ -73,13 +71,13 @@ final class BootEngine: ObservableObject {
         append("设备 \(DeviceProfile.chipName) · guest \(ramMB) MiB / \(cpuCount) 核", .info)
         append("boot-args: \(bootArgs)", .info)
 
-        stage = "设备与内存"
+        stage = "引擎初始化"
         await tick()
         await reserveGuestRAM()
 
-        stage = "JIT 区域"
+        stage = "翻译器自测"
         await tick()
-        await reserveJIT()
+        await runEngineSelfTest()
 
         stage = "固件"
         await tick()
@@ -95,11 +93,6 @@ final class BootEngine: ObservableObject {
             await parseKernel(kernel)
         }
 
-        stage = "引擎"
-        await tick()
-        append("arm64 翻译引擎未链接（需要 make ios-lib 产出 libhengevm.a）", .warn)
-        append("内核已就位，等待引擎接管 CPU", .warn)
-
         stage = "已停止"
         running = false
         append("—— 启动流程结束 ——", .info)
@@ -113,34 +106,33 @@ final class BootEngine: ObservableObject {
     // MARK: - Steps
 
     private func reserveGuestRAM() async {
-        let bytes = ramMB * 1024 * 1024
-        let p = mmap(nil, bytes, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANON, -1, 0)
-        guard p != MAP_FAILED else {
-            append("guest RAM 分配失败 (\(ramMB) MiB): \(String(cString: strerror(errno)))", .error)
-            return
+        let bytes = UInt64(ramMB) * 1024 * 1024
+        var status = RyEngineStatus()
+        let jitBytes = UInt64(256) * 1024 * 1024
+        let rc = ry_engine_init(bytes, jitBytes, &status)
+        let detail = String(cString: ry_engine_detail(&status))
+        if rc == 0 {
+            append("引擎初始化成功：RAM \(ramMB) MiB + JIT 256 MiB", .ok)
+            append(detail, .info)
+            engineReady = true
+        } else {
+            append("引擎初始化失败 (rc=\(rc), stage=\(status.stage))：\(detail)", .error)
         }
-        guestRAM = p
-        guestRAMSize = bytes
-        append("guest RAM 已分配：\(ramMB) MiB @ \(hex(UInt(bitPattern: p)))", .ok)
     }
 
-    private func reserveJIT() async {
-        // 256 MiB of executable space for translated blocks.
-        let bytes = 256 * 1024 * 1024
-        let p = mmap(nil, bytes, PROT_READ | PROT_WRITE | PROT_EXEC,
-                     MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0)
-        if p == MAP_FAILED {
-            let err = errno
-            append("JIT 区域申请失败 errno=\(err)（\(String(cString: strerror(err)))）", .warn)
-            if !DebugCapability.jitAvailable {
-                append("没有调试权限，MAP_JIT 被拒。引擎可用解释器模式，但速度很慢。", .warn)
-            }
+    private func runEngineSelfTest() async {
+        guard engineReady else {
+            append("引擎未就绪，跳过指令测试", .warn)
             return
         }
-        jitRegion = p
-        jitSize = bytes
-        append("JIT 区域已预留：256 MiB", .ok)
+        var status = RyEngineStatus()
+        let rc = ry_engine_selftest(&status)
+        let detail = String(cString: ry_engine_detail(&status))
+        if rc == 0 {
+            append("翻译器自测通过：guest 指令执行并返回 \(status.sample_result)", .ok)
+        } else {
+            append("翻译器自测失败 (rc=\(rc))：\(detail)", .error)
+        }
     }
 
     private func loadKernel() async -> Data? {
