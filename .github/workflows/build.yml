@@ -1,0 +1,89 @@
+name: iosonios-build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# Each Contents-API push is one commit; per-run groups keep a slow run from
+# cancelling a fresh one (the shared-group failure seen on RyBox, 2026-11-06).
+concurrency:
+  group: iosonios-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: App
+        run: xcodegen generate
+
+      - name: Downgrade objectVersion for Xcode 15.4 on macos-14
+        working-directory: App
+        run: |
+          set -eo pipefail
+          PBX=iOSoniOS.xcodeproj/project.pbxproj
+          sed -i '' 's/objectVersion = .*;/objectVersion = 56;/' "$PBX"
+          grep -m1 objectVersion "$PBX" || true
+
+      - name: Build (unsigned, ad-hoc re-sign after staging)
+        working-directory: App
+        run: |
+          set -eo pipefail
+          xcodebuild -project iOSoniOS.xcodeproj \
+            -scheme iOSoniOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee "$PWD/build.log"
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Stage firmware assets (P0)
+        working-directory: App
+        run: |
+          set -eo pipefail
+          APP="$PWD/build/Build/Products/Release-iphoneos/iOSoniOS.app"
+          test -d "$APP" || { echo "app bundle missing"; exit 1; }
+          mkdir -p "$APP/Assets"
+          # Assets are produced by tools/prepare_assets.sh on a machine with
+          # the IPSW; when absent, the app still builds and reports 0/N in UI.
+          for f in bootkc dtree ramdisk.dmg trustcache nvram.bin; do
+            if [ -f "../assets/prepared/$f" ]; then
+              cp "../assets/prepared/$f" "$APP/Assets/$f"
+              echo "staged $f"
+            else
+              echo "WARN: $f not present (asset prep not yet run)"
+            fi
+          done
+
+      - name: Ad-hoc sign and package IPA
+        working-directory: App
+        run: |
+          set -eo pipefail
+          APP="$PWD/build/Build/Products/Release-iphoneos/iOSoniOS.app"
+          ENT="$PWD/Sources/iOSoniOS.entitlements"
+          codesign --force --sign - --timestamp=none --entitlements "$ENT" "$APP"
+          codesign -d --entitlements - "$APP" || true
+          rm -rf Payload
+          mkdir -p Payload
+          cp -r "$APP" Payload/iOSoniOS.app
+          zip -qry iOSoniOS.ipa Payload
+          ls -lh iOSoniOS.ipa
+
+      - name: Upload IPA + build log
+        uses: actions/upload-artifact@v4
+        with:
+          name: iOSoniOS.ipa
+          path: |
+            App/iOSoniOS.ipa
+            App/build.log
