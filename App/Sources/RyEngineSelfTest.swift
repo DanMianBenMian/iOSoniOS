@@ -15,7 +15,7 @@ enum RyEngineSelfTest {
 
         RyLog.log("自检", "页大小=\(result.page_size) 与 guest 匹配=\(result.pages_match == 1)")
         RyLog.log("自检", "RWX 申请=\(result.mmap_ok == 1 ? "成功" : "失败") 信号=\(result.fault_signal)")
-        RyLog.log("自检", result.detail, level: result.jit_ok == 1 ? .info : .warn)
+        RyLog.log("自检", detail, level: result.jit_ok == 1 ? .info : .warn)
 
         return RySelfTestOutcome(
             jitOK: result.jit_ok == 1,
