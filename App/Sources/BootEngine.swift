@@ -121,7 +121,7 @@ final class BootEngine: ObservableObject {
             append("内核已运行：\(detail)", .ok)
         } else {
             append("内核执行停止 (rc=\(rc))：\(detail)",
-                   rc == Int32(RY_ERR_LIMIT) ? .info : .warn)
+                   rc == -4 ? .info : .warn)   // -4 = RY_ERR_LIMIT (instruction budget)
         }
         let entry = ry_engine_kernel_entry()
         append(String(format: "内核入口 0x%llx", entry), .info)
