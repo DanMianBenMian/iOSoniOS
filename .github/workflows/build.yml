@@ -5,15 +5,16 @@ on:
   push:
     branches: [main]
 
-# Each Contents-API push is one commit; per-run groups keep a slow run from
-# cancelling a fresh one (the shared-group failure seen on RyBox, 2026-11-06).
+# IMPORTANT (2026-11-20): macos-14 is retired on GitHub-hosted runners -- jobs
+# get runner_id=0 and are cancelled within 1s. Verified macos-latest works.
+# Each push is one commit; per-run groups keep a slow run from cancelling a fresh one.
 concurrency:
   group: iosonios-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
