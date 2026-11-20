@@ -28,14 +28,6 @@ struct ContentView: View {
     }
 }
 
-// Allow ConfigView to be opened with an existing config to edit it.
-extension ConfigView {
-    init(config: VMConfig, onCreate: @escaping (VMConfig) -> Void) {
-        self._config = State(initialValue: config)
-        self.onCreate = onCreate
-    }
-}
-
 // MARK: - Main view: Start button, human-language card titles, raw log output
 
 struct MainView: View {

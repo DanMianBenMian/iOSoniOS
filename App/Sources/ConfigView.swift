@@ -1,8 +1,13 @@
 import SwiftUI
 
 struct ConfigView: View {
-    @State private var config = VMConfig.defaults
+    @State private var config: VMConfig
     let onCreate: (VMConfig) -> Void
+
+    init(config: VMConfig = VMConfig.defaults, onCreate: @escaping (VMConfig) -> Void) {
+        self._config = State(initialValue: config)
+        self.onCreate = onCreate
+    }
 
     var body: some View {
         NavigationStack {
