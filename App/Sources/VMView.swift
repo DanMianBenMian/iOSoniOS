@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// The running-VM surface: pure black, minimal chrome, a collapsible floating
-/// key cluster in Liquid Glass, and the guest's own console output.
+/// key cluster in Liquid Glass, a live boot-progress panel at the top, and the
+/// guest's own console output below.
 struct VMView: View {
     let config: VMConfig
     @StateObject private var engine: BootEngine
@@ -21,6 +22,8 @@ struct VMView: View {
 
             VStack(spacing: 0) {
                 topBar
+                progressPanel
+                if let issue = engine.issue { issueCard(issue) }
                 console
             }
 
@@ -47,9 +50,9 @@ struct VMView: View {
             Circle()
                 .fill(engine.running ? Theme.VM.accent : Theme.VM.textFaint)
                 .frame(width: 6, height: 6)
-            Text(engine.stage)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(Theme.VM.textFaint)
+            Text("iOSoniOS · 虚拟机")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Theme.VM.textDim)
             Spacer()
             glassIcon(showLog ? "text.alignleft" : "text.alignleft", active: showLog) {
                 withAnimation(.easeOut(duration: 0.2)) { showLog.toggle() }
@@ -62,6 +65,195 @@ struct VMView: View {
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 6)
+    }
+
+    // MARK: - Live progress panel
+
+    private var progressPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                stageTile
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(engine.stage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(Theme.VM.text)
+                    Text(progressCaption)
+                        .font(.system(size: 10))
+                        .foregroundColor(Theme.VM.textDim)
+                }
+                Spacer(minLength: 8)
+                percentLabel
+            }
+
+            progressBar
+
+            stepChain
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Theme.VM.panelFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Theme.VM.keyStroke, lineWidth: 0.5)
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
+    }
+
+    /// Stage icon in a squircle tile, tinted by the current status.
+    private var stageTile: some View {
+        let current = engine.steps.first { $0.state == .running }
+        let icon = current?.icon ?? (engine.progress >= 1 ? "checkmark" : "bolt.fill")
+        let color = panelTint
+        return RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(color.opacity(0.18))
+            .frame(width: 38, height: 38)
+            .overlay(
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(color)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .stroke(color.opacity(0.35), lineWidth: 0.5)
+            )
+    }
+
+    private var percentLabel: some View {
+        Text(String(format: "%.0f%%", engine.progress * 100))
+            .font(.system(size: 22, weight: .medium, design: .monospaced))
+            .foregroundColor(panelTint)
+            .contentTransition(.numericText())
+            .animation(.easeOut(duration: 0.25), value: engine.progress)
+    }
+
+    private var progressBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.VM.keyFill).frame(height: 6)
+                Capsule()
+                    .fill(panelTint)
+                    .frame(width: max(0, geo.size.width * CGFloat(engine.progress)), height: 6)
+                    .animation(.easeOut(duration: 0.3), value: engine.progress)
+            }
+        }
+        .frame(height: 6)
+    }
+
+    private var stepChain: some View {
+        HStack(spacing: 0) {
+            ForEach(engine.steps) { step in
+                stepChip(step)
+                if step.id < engine.steps.count - 1 {
+                    Spacer(minLength: 2)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stepChip(_ step: BootEngine.BootStep) -> some View {
+        VStack(spacing: 3) {
+            ZStack {
+                Circle()
+                    .fill(stepFill(step.state))
+                    .frame(width: 20, height: 20)
+                switch step.state {
+                case .done:
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.black)
+                case .failed:
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(.white)
+                case .running:
+                    Circle().fill(.white).frame(width: 5, height: 5)
+                case .skipped:
+                    Image(systemName: "minus")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(Theme.VM.textFaint)
+                case .pending:
+                    Circle().fill(Theme.VM.textFaint).frame(width: 5, height: 5)
+                }
+            }
+            Text(step.title)
+                .font(.system(size: 8.5))
+                .foregroundColor(step.state == .running
+                                 ? Theme.VM.text
+                                 : (step.state == .pending || step.state == .skipped
+                                    ? Theme.VM.textFaint : Theme.VM.textDim))
+                .lineLimit(1)
+        }
+        .frame(minWidth: 34)
+    }
+
+    private func stepFill(_ s: BootEngine.BootStep.State) -> Color {
+        switch s {
+        case .done:     return Theme.VM.ok
+        case .failed:   return Theme.VM.danger
+        case .running:  return Theme.VM.accent
+        case .skipped:  return Theme.VM.keyFill
+        case .pending:  return Theme.VM.keyStroke
+        }
+    }
+
+    private var panelTint: Color {
+        if let issue = engine.issue { return issue.fatal ? Theme.VM.danger : Theme.VM.warn }
+        if engine.progress >= 1 { return Theme.VM.ok }
+        return Theme.VM.accent
+    }
+
+    private var progressCaption: String {
+        let done = engine.steps.filter { $0.state == .done }.count
+        let total = engine.steps.count
+        if let issue = engine.issue, issue.fatal {
+            return "在第 \(done + 1)/\(total) 步停下"
+        }
+        return "步骤 \(done)/\(total) · 真实进度"
+    }
+
+    // MARK: - Error card
+
+    @ViewBuilder
+    private func issueCard(_ issue: BootEngine.BootIssue) -> some View {
+        let color = issue.fatal ? Theme.VM.danger : Theme.VM.warn
+        HStack(alignment: .top, spacing: 12) {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(color.opacity(0.18))
+                .frame(width: 34, height: 34)
+                .overlay(
+                    Image(systemName: issue.icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(color)
+                )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(issue.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(Theme.VM.text)
+                Text(issue.detail)
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.VM.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            glassIcon("xmark", active: false) { engine.dismissIssue() }
+        }
+        .padding(13)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(color.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(color.opacity(0.30), lineWidth: 0.5)
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
+        .transition(.move(edge: .top).combined(with: .opacity))
+        .animation(.easeOut(duration: 0.25), value: engine.issue?.id)
     }
 
     // MARK: - Console
@@ -80,6 +272,7 @@ struct VMView: View {
                     }
                 }
                 .padding(.horizontal, 16)
+                .padding(.top, 8)
                 .padding(.bottom, 140)
             }
             .opacity(showLog ? 1 : 0)

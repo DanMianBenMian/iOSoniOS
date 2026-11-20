@@ -58,5 +58,6 @@ enum Theme {
         static let ok       = Color(red: 0.427, green: 0.678, blue: 0.525)
         static let keyFill  = Color.white.opacity(0.10)
         static let keyStroke = Color.white.opacity(0.16)
+        static let panelFill = Color.white.opacity(0.055)
     }
 }

@@ -1,19 +1,12 @@
 import Foundation
 import Darwin
 
-/// Real boot work, not a progress animation.
+/// Real boot work, now exposed as structured progress for the on-screen GUI.
 ///
-/// Order matches what a firmware-adjacent loader actually does:
-///   1. locate the kernelcache (bootkc) and the device tree (dtree)
-///   2. validate Mach-O magic / ADT header
-///   3. reserve guest RAM with the configured size
-///   4. reserve the JIT (executable) region
-///   5. parse the kernelcache's load commands to find __TEXT_EXEC and the entry
-///   6. report exactly how far it got, and what is still missing
-///
-/// Step 6 matters: this build has no arm64 translation engine linked in yet, so
-/// the honest output is "kernel parsed, engine absent" rather than pretending the
-/// guest is running.
+/// Every stage of `run()` flips a `BootStep` state, which drives both the
+/// percentage and the step chain in VMView. Failures raise a `BootIssue`
+/// (icon + title + plain-language explanation) that the GUI renders as a card.
+/// Nothing here is a fake animation: the states track actual work.
 @MainActor
 final class BootEngine: ObservableObject {
 
@@ -24,12 +17,34 @@ final class BootEngine: ObservableObject {
         enum Kind { case info, ok, warn, error, guest }
     }
 
+    /// One stage of the boot chain.
+    struct BootStep: Identifiable, Equatable {
+        let id: Int
+        let icon: String
+        let title: String
+        var state: State = .pending
+        enum State: Equatable { case pending, running, done, failed, skipped }
+    }
+
+    /// A GUI-displayable problem: icon, short title, plain-language detail.
+    struct BootIssue: Identifiable {
+        let id = UUID()
+        let icon: String
+        let title: String
+        let detail: String
+        let fatal: Bool
+    }
+
     @Published private(set) var lines: [Line] = []
     @Published private(set) var running = false
     @Published private(set) var stage = "待机"
     @Published private(set) var reachedKernel = false
 
-    private var guestRAM: UnsafeMutableRawPointer?
+    // MARK: Progress surface
+    @Published private(set) var steps: [BootStep] = []
+    @Published private(set) var progress: Double = 0        // 0...1
+    @Published private(set) var issue: BootIssue? = nil
+
     private var guestRAMSize = 0
     private var engineReady = false
     private var engineBackend: Int32 = 0
@@ -42,12 +57,22 @@ final class BootEngine: ObservableObject {
         self.ramMB = max(512, config.ramMB)
         self.cpuCount = max(1, config.cpuCount)
         self.bootArgs = config.bootArgs
+        self.steps = [
+            BootStep(id: 0, icon: "cpu.fill",                   title: "引擎初始化"),
+            BootStep(id: 1, icon: "bolt.fill",                  title: "指令自测"),
+            BootStep(id: 2, icon: "shippingbox.fill",           title: "固件内核"),
+            BootStep(id: 3, icon: "network",                    title: "设备树"),
+            BootStep(id: 4, icon: "doc.text.magnifyingglass",   title: "内核解析"),
+            BootStep(id: 5, icon: "play.fill",                  title: "内核执行"),
+        ]
     }
 
     // MARK: - Lifecycle
 
     func start() {
         guard !running else { return }
+        issue = nil
+        resetSteps()
         running = true
         Task { await run() }
     }
@@ -59,6 +84,9 @@ final class BootEngine: ObservableObject {
         stage = "已停止"
         append("引擎已释放", .info)
     }
+
+    /// Hide the current error card (user dismissed it).
+    func dismissIssue() { issue = nil }
 
     /// A hardware key arrived from the floating key pad.
     func noteKey(_ name: String) {
@@ -72,40 +100,66 @@ final class BootEngine: ObservableObject {
         append("设备 \(DeviceProfile.chipName) · guest \(ramMB) MiB / \(cpuCount) 核", .info)
         append("boot-args: \(bootArgs)", .info)
 
-        stage = "引擎初始化"
+        // 1 — engine
+        beginStep(0)
         await tick()
-        await reserveGuestRAM()
+        guard await reserveGuestRAM() else {
+            endStep(0, .failed)
+            report(icon: "xmark.octagon.fill", title: "引擎启动失败",
+                   detail: "无法为客机申请 \(ramMB) MiB 内存或初始化执行后端。试着把内存调低一点，或重启本 App 再试。",
+                   fatal: true)
+            return finish()
+        }
+        endStep(0)
 
-        stage = "翻译器自测"
+        // 2 — self test
+        beginStep(1)
         await tick()
-        await runEngineSelfTest()
+        let testOK = await runEngineSelfTest()
+        endStep(1, testOK ? .done : .failed)
 
-        stage = "固件"
+        // 3 — kernel image
+        beginStep(2)
         await tick()
-        let kernel = await loadKernel()
+        guard let kernel = await loadKernel() else {
+            endStep(2, .failed)
+            report(icon: "doc.badge.exclamationmark", title: "缺少内核文件",
+                   detail: "找不到 bootkc（kernelcache）。请到「下载」页导入 IPSW，点「从 IPSW 提取内核」生成它；或手动把 bootkc 放进本 App 的文件目录。内核没就绪，虚拟机无法启动。",
+                   fatal: true)
+            return finish()
+        }
+        endStep(2)
 
-        stage = "设备树"
+        // 4 — device tree
+        beginStep(3)
         await tick()
         let dtreeSize = await loadDeviceTree()
+        endStep(3, dtreeSize > 0 ? .done : .skipped)
 
-        if let kernel {
-            stage = "内核解析"
-            await tick()
-            await parseKernel(kernel)
+        // 5 — Mach-O parse
+        beginStep(4)
+        await tick()
+        await parseKernel(kernel)
+        endStep(4)
 
-            stage = "内核执行"
-            await tick()
-            await runKernel(kernel)
-        }
+        // 6 — execute
+        beginStep(5)
+        await tick()
+        let execOK = await runKernel(kernel)
+        endStep(5, execOK ? .done : .failed)
 
+        finish()
+    }
+
+    private func finish() {
         stage = "已停止"
         running = false
         append("—— 启动流程结束 ——", .info)
-        _ = dtreeSize
     }
 
     /// Loads the kernelcache into guest RAM and starts executing it.
-    private func runKernel(_ kernel: Data) async {
+    /// Returns false only for a real failure (not the instruction-budget stop).
+    private func runKernel(_ kernel: Data) async -> Bool {
         // Route guest UART output into the app log, so kernel printk shows up.
         ry_engine_set_uart { ch in
             BootEngine.uartSink(ch)
@@ -119,12 +173,18 @@ final class BootEngine: ObservableObject {
         let detail = String(cString: ry_engine_detail(&status))
         if rc == 0 {
             append("内核已运行：\(detail)", .ok)
-        } else {
-            append("内核执行停止 (rc=\(rc))：\(detail)",
-                   rc == -4 ? .info : .warn)   // -4 = RY_ERR_LIMIT (instruction budget)
+            return true
         }
-        let entry = ry_engine_kernel_entry()
-        append(String(format: "内核入口 0x%llx", entry), .info)
+        if rc == -4 {
+            // RY_ERR_LIMIT — instruction budget exhausted, expected for the demo.
+            append("内核执行停止 (rc=\(rc))：\(detail)", .info)
+            return true
+        }
+        append("内核执行中断 (rc=\(rc))：\(detail)", .warn)
+        report(icon: "exclamationmark.triangle.fill", title: "内核执行中断",
+               detail: "解释器在第 \(status.stage) 步停下：\(detail)。这是软件模拟的已知限制，不代表客机损坏。可查看下方日志了解详情。",
+               fatal: false)
+        return false
     }
 
     /// UART sink: accumulate bytes into lines and emit them as guest log lines.
@@ -151,10 +211,50 @@ final class BootEngine: ObservableObject {
         try? await Task.sleep(nanoseconds: 180_000_000)
     }
 
+    // MARK: - Progress plumbing
+
+    private func resetSteps() {
+        for i in steps.indices { steps[i].state = .pending }
+        progress = 0
+        stage = "准备"
+    }
+
+    private func beginStep(_ i: Int) {
+        steps[i].state = .running
+        stage = steps[i].title
+        recalcProgress()
+    }
+
+    private func endStep(_ i: Int, _ state: BootStep.State = .done) {
+        steps[i].state = state
+        recalcProgress()
+    }
+
+    private func recalcProgress() {
+        guard !steps.isEmpty else { progress = 0; return }
+        let sum = steps.reduce(0.0) { acc, s in
+            acc + Self.weight(s.state)
+        }
+        progress = min(1, max(0, sum / Double(steps.count)))
+    }
+
+    private static func weight(_ s: BootStep.State) -> Double {
+        switch s {
+        case .pending: return 0
+        case .running: return 0.5
+        case .done, .failed, .skipped: return 1
+        }
+    }
+
+    private func report(icon: String, title: String, detail: String, fatal: Bool) {
+        issue = BootIssue(icon: icon, title: title, detail: detail, fatal: fatal)
+    }
+
     // MARK: - Steps
 
-    private func reserveGuestRAM() async {
+    private func reserveGuestRAM() async -> Bool {
         let bytes = UInt64(ramMB) * 1024 * 1024
+        guestRAMSize = Int(bytes)
         // Only ask for the JIT when a debugger is attached: touching JIT memory
         // without permission kills the process instead of returning an error.
         // 2 = JIT, 1 = interpreter (mirrors RY_BACKEND_* in ry_engine.h)
@@ -168,15 +268,16 @@ final class BootEngine: ObservableObject {
             append("\(name)引擎就绪：\(detail)", .ok)
             engineReady = true
             engineBackend = status.backend
-        } else {
-            append("引擎初始化失败 (rc=\(rc), stage=\(status.stage))：\(detail)", .error)
+            return true
         }
+        append("引擎初始化失败 (rc=\(rc), stage=\(status.stage))：\(detail)", .error)
+        return false
     }
 
-    private func runEngineSelfTest() async {
+    private func runEngineSelfTest() async -> Bool {
         guard engineReady else {
             append("引擎未就绪，跳过指令测试", .warn)
-            return
+            return false
         }
         // Pure interpreter: no executable memory, so this is safe under any
         // signature and cannot be killed by AMFI.
@@ -185,15 +286,19 @@ final class BootEngine: ObservableObject {
         let detail = String(cString: ry_engine_detail(&status))
         if rc == 0 {
             append("解释器自测通过：\(detail)", .ok)
-        } else {
-            append("解释器自测失败 (rc=\(rc))：\(detail)", .error)
+            return true
         }
+        append("解释器自测失败 (rc=\(rc))：\(detail)", .error)
+        report(icon: "exclamationmark.triangle.fill", title: "指令自测未通过",
+               detail: "解释器没能正确执行测试指令：\(detail)。虚拟机会继续尝试，但结果可能不可靠。",
+               fatal: false)
+        return false
     }
 
     private func loadKernel() async -> Data? {
         let url = RyLog.documentsURL.appendingPathComponent("bootkc")
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
-            append("缺少 bootkc（kernelcache）。请先导入 IPSW 或放入 bootkc。", .error)
+            append("缺少 bootkc（kernelcache）。", .error)
             return nil
         }
         let magic = data.withUnsafeBytes { $0.load(as: UInt32.self) }
@@ -209,14 +314,14 @@ final class BootEngine: ObservableObject {
     private func loadDeviceTree() async -> Int {
         let url = RyLog.documentsURL.appendingPathComponent("dtree")
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
-            append("缺少 dtree。", .warn)
+            append("缺少 dtree，按空设备树继续。", .warn)
             return 0
         }
-        // ADT root: u32 propCount, u32 childCount.
         guard data.count > 8 else {
             append("dtree 太小，无法解析", .error)
             return 0
         }
+        // ADT root: u32 propCount, u32 childCount.
         let counts = data.withUnsafeBytes {
             ($0.load(fromByteOffset: 0, as: UInt32.self),
              $0.load(fromByteOffset: 4, as: UInt32.self))
@@ -259,9 +364,5 @@ final class BootEngine: ObservableObject {
             }
         }()
         RyLog.log("vm", text, level: level)
-    }
-
-    private func hex(_ v: UInt) -> String {
-        String(format: "0x%llx", UInt64(v))
     }
 }

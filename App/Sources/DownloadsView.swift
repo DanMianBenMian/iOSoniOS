@@ -13,6 +13,7 @@ struct DownloadsView: View {
     @State private var importMessage: String?
     @State private var extracting = false
     @State private var extractMessage: String?
+    @State private var notice: StorageNoticeSheet.Kind? = nil
 
     var body: some View {
         ZStack {
@@ -41,6 +42,17 @@ struct DownloadsView: View {
                       allowedContentTypes: [.data],
                       allowsMultipleSelection: false) { result in
             handleImport(result)
+        }
+        .sheet(item: $notice) { kind in
+            StorageNoticeSheet(kind: kind) {
+                switch kind {
+                case .download: startDownload()
+                case .extract:
+                    if let name = localFiles.first(where: { $0.hasSuffix(".ipsw") }) {
+                        extractBootkc(name)
+                    }
+                }
+            }
         }
     }
 
@@ -86,7 +98,7 @@ struct DownloadsView: View {
                     .nativeButton()
                 } else {
                     Button {
-                        downloader.start(url: ipswURL, suggestedName: "iPad_Fall_2022_27.0_24A5370h_Restore.ipsw")
+                        notice = .download
                     } label: {
                         Label("下载到本机", systemImage: "arrow.down.circle.fill")
                             .font(.system(size: 13, weight: .semibold))
@@ -108,6 +120,10 @@ struct DownloadsView: View {
     private var isFinished: Bool {
         if case .finished = downloader.phase { return true }
         return false
+    }
+
+    private func startDownload() {
+        downloader.start(url: ipswURL, suggestedName: "iPad_Fall_2022_27.0_24A5370h_Restore.ipsw")
     }
 
     private var progressBlock: some View {
@@ -164,7 +180,7 @@ struct DownloadsView: View {
                         .foregroundColor(Theme.text)
                     Text(importMessage ?? "从「文件」里选一个 .ipsw 放进本 App")
                         .font(.system(size: 11))
-                        .foregroundColor(importMessage == nil ? Theme.textMuted : Theme.ok)
+                        .foregroundColor(messageTint(importMessage))
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -185,8 +201,8 @@ struct DownloadsView: View {
 
         return VStack(alignment: .leading, spacing: 10) {
             Button {
-                guard let name = ipsw else { return }
-                extractBootkc(name)
+                guard ipsw != nil else { return }
+                notice = .extract
             } label: {
                 HStack(spacing: 12) {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -202,7 +218,7 @@ struct DownloadsView: View {
                                  ? "先导入或下载一个 .ipsw"
                                  : "解出 kernelcache → bootkc"))
                             .font(.system(size: 11))
-                            .foregroundColor(extractMessage == nil ? Theme.textMuted : Theme.ok)
+                            .foregroundColor(messageTint(extractMessage))
                     }
                     Spacer()
                     if extracting {
@@ -291,6 +307,14 @@ struct DownloadsView: View {
         Text("创建虚拟机时会自动使用这里的 .ipsw。测试版允许没有固件直接创建。")
             .font(.system(size: 10)).foregroundColor(Theme.textFaint)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func messageTint(_ message: String?) -> Color {
+        guard let m = message else { return Theme.textMuted }
+        if m.hasPrefix("失败") || m.contains("失败") || m.contains("取消") {
+            return Theme.danger
+        }
+        return Theme.ok
     }
 
     private func fmt(_ bytes: Int64) -> String {
