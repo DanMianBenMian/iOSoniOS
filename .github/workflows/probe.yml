@@ -1,8 +1,13 @@
 name: probe
 on:
   workflow_dispatch:
+    inputs:
+      label:
+        description: runner label
+        required: true
+        default: macos-latest
 jobs:
   probe:
-    runs-on: macos-14
+    runs-on: ${{ inputs.label }}
     steps:
-      - run: echo "MACOS_PROBE_OK $(sw_vers -productVersion)"
+      - run: echo "PROBE_OK ${{ inputs.label }}"
