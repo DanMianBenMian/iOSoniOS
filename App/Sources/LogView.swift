@@ -4,8 +4,6 @@ import UIKit
 struct LogView: View {
     @State private var entries: [RyLog.Entry] = []
     @State private var levelFilter: RyLog.Level = .trace
-    @State private var autoScroll = true
-    @State private var search = ""
     @State private var showShare = false
 
     private var filtered: [RyLog.Entry] {
@@ -13,15 +11,13 @@ struct LogView: View {
         let threshold = order.firstIndex(of: levelFilter) ?? 0
         return entries.filter { e in
             let idx = order.firstIndex { $0.rawValue == e.level } ?? 0
-            guard idx >= threshold else { return false }
-            if search.isEmpty { return true }
-            return e.message.localizedCaseInsensitiveContains(search)
-                || e.tag.localizedCaseInsensitiveContains(search)
+            return idx >= threshold
         }
     }
 
     var body: some View {
-        NavigationStack {
+        ZStack {
+            Theme.canvas.ignoresSafeArea()
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     List {
@@ -29,75 +25,62 @@ struct LogView: View {
                             HStack(alignment: .top, spacing: 6) {
                                 Text(e.time)
                                     .font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(Theme.textFaint)
                                 Text(e.level.uppercased())
-                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
                                     .foregroundColor(color(for: e.level))
                                     .frame(width: 42, alignment: .leading)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text("[\(e.tag)]")
-                                        .font(.system(size: 10, design: .monospaced))
-                                        .foregroundColor(.accentColor)
-                                    Text(e.message)
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .textSelection(.enabled)
-                                }
+                                Text("[\(e.tag)] \(e.message)")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundColor(Theme.textMuted)
+                                    .textSelection(.enabled)
                             }
                             .id(e.id)
                         }
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                     .onChange(of: filtered.count) { _ in
-                        if autoScroll, let last = filtered.last {
-                            withAnimation(.none) { proxy.scrollTo(last.id, anchor: .bottom) }
+                        if let last = filtered.last {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo(last.id, anchor: .bottom)
+                            }
                         }
                     }
                 }
 
-                HStack {
-                    Picker("级别", selection: $levelFilter) {
-                        ForEach(RyLog.Level.allCases, id: \.self) { l in
-                            Text(l.rawValue).tag(l)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    Toggle("自动滚动", isOn: $autoScroll)
-                        .toggleStyle(.switch)
-                        .font(.caption)
+                Picker("级别", selection: $levelFilter) {
+                    ForEach(RyLog.Level.allCases, id: \.self) { l in Text(l.rawValue).tag(l) }
                 }
-                .padding(8)
+                .pickerStyle(.segmented)
+                .padding(10)
             }
-            .searchable(text: $search, prompt: "搜索日志")
-            .navigationTitle("引擎日志")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showShare = true
-                    } label: {
-                        Label("导出", systemImage: "square.and.arrow.up")
-                    }
+        }
+        .navigationTitle("日志")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showShare = true } label: {
+                    Image(systemName: "square.and.arrow.up").foregroundColor(Theme.textMuted)
                 }
             }
-            .sheet(isPresented: $showShare) {
-                ShareSheet(items: [RyLog.logFileURL])
-            }
-            .task {
-                // Refresh while the view is up; the log writer itself is live.
-                while !Task.isCancelled {
-                    entries = RyLog.recent(1000)
-                    try? await Task.sleep(nanoseconds: 400_000_000)
-                }
+        }
+        .sheet(isPresented: $showShare) { ShareSheet(items: [RyLog.logFileURL]) }
+        .task {
+            while !Task.isCancelled {
+                entries = RyLog.recent(600)
+                try? await Task.sleep(nanoseconds: 400_000_000)
             }
         }
     }
 
     private func color(for level: String) -> Color {
         switch level {
-        case "error": return .red
-        case "warn": return .orange
-        case "guest": return .purple
-        case "trace": return .secondary
-        default: return .primary
+        case "error": return Theme.logError
+        case "warn": return Theme.logWarn
+        case "guest": return Theme.logGuest
+        default: return Theme.textFaint
         }
     }
 }

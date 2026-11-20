@@ -3,258 +3,155 @@ import SwiftUI
 struct ContentView: View {
     @State private var config: VMConfig? = VMConfig.load()
     @State private var showConfig = false
+    @State private var showSettings = false
 
     var body: some View {
         Group {
             if let cfg = config {
-                MainView(config: cfg,
-                         onReconfigure: { showConfig = true },
-                         onDelete: {
-                             VMConfig.clear()
-                             config = nil
-                         })
+                NavigationStack {
+                    MainView(config: cfg,
+                             onReconfigure: { showConfig = true },
+                             onSettings: { showSettings = true })
+                }
                 .sheet(isPresented: $showConfig) {
                     ConfigView(config: cfg) { newConfig in
                         showConfig = false
                         config = newConfig
                     }
                 }
-            } else {
-                ConfigView { cfg in
-                    config = cfg
+                .sheet(isPresented: $showSettings) {
+                    if var cfg = config {
+                        SettingsView(config: Binding(
+                            get: { cfg },
+                            set: { cfg = $0; config = $0 }
+                        )) { showSettings = false }
+                    }
                 }
+            } else {
+                ConfigView { cfg in config = cfg }
             }
         }
+        .preferredColorScheme(.dark)
     }
 }
-
-// MARK: - Main view: Start button, human-language card titles, raw log output
 
 struct MainView: View {
     let config: VMConfig
     let onReconfigure: () -> Void
-    let onDelete: () -> Void
+    let onSettings: () -> Void
 
-    @State private var entries: [RyLog.Entry] = []
-    @State private var running = false
-    @State private var steps: [BootStep] = []
-    @State private var refreshTask: Task<Void, Never>?
-
-    struct BootStep: Identifiable {
-        let id = UUID()
-        let title: String        // human-language, shown in card header
-        var state: String = "等待"
-    }
-
-    private let stepTitles = [
-        "正在读取设备与系统信息",
-        "正在检查固件资产",
-        "正在检测内存页大小",
-        "正在探测可执行内存",
-        "正在打开实时日志",
-    ]
+    @State private var vramMB: Int = 0
 
     var body: some View {
-        NavigationStack {
+        ZStack {
+            Theme.canvas.ignoresSafeArea()
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    configCard
-                    controlsCard
-                    if !steps.isEmpty { progressCard }
-                    logCard
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    specCard
+                    startLink
+                    secondaryActions
                 }
-                .padding()
+                .padding(20)
             }
-            .navigationTitle(config.name)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("修改配置", action: onReconfigure)
-                        Button("删除虚拟机", role: .destructive, action: onDelete)
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
+        }
+        .navigationTitle(config.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { onSettings() } label: {
+                    Image(systemName: "gearshape").foregroundColor(Theme.textMuted)
                 }
             }
-            .task {
-                entries = RyLog.recent(200)
-                startLiveRefresh()
-            }
-            .onDisappear { refreshTask?.cancel() }
+        }
+        .onAppear { vramMB = DeviceProfile.estimatedVRAMMB(ramGB: Double(config.ramMB)/1024, cpuCores: config.cpuCount) }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("虚拟机就绪").font(.system(size: 26, weight: .semibold))
+                .foregroundColor(Theme.text)
+            Text("点 Start 进入启动会话，进度和日志会实时显示")
+                .font(.system(size: 12)).foregroundColor(Theme.textMuted)
         }
     }
 
-    private var configCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("虚拟机配置", systemImage: "slider.horizontal.3")
-                .font(.headline)
-            HStack { Text("内存"); Spacer(); Text("\(config.ramMB) MB").monospaced() }
-            HStack { Text("CPU"); Spacer(); Text("\(config.cpuCount) 核心").monospaced() }
-            HStack { Text("分辨率"); Spacer(); Text("\(config.width) × \(config.height)").monospaced() }
-            HStack { Text("JIT"); Spacer(); Text(config.enableJIT ? "开启" : "关闭").monospaced() }
-            HStack { Text("启动参数"); Spacer(); Text(config.bootArgs).monospaced() }
-        }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var controlsCard: some View {
+    private var specCard: some View {
         VStack(spacing: 10) {
-            HStack {
-                Image(systemName: running ? "bolt.horizontal.fill" : "play.circle.fill")
-                    .font(.title2)
-                Text(running ? "正在启动…" : "准备就绪")
-                    .font(.headline)
-                Spacer()
+            SettingRow(icon: "memorychip", title: "内存") {
+                HStack(spacing: 2) {
+                    RollingNumber(value: String(format: "%.1f", Double(config.ramMB)/1024))
+                    Text("GiB").font(.system(size: 11)).foregroundColor(Theme.textMuted)
+                }
             }
+            SettingRow(icon: "cpu", title: "CPU 核心") {
+                RollingNumber(value: "\(config.cpuCount)")
+            }
+            SettingRow(icon: "rectangle.3.group", title: "显存",
+                       iconColor: vramMB < DeviceProfile.lowVRAMThresholdMB ? Theme.warn : Theme.accent) {
+                HStack(spacing: 2) {
+                    RollingNumber(value: "\(vramMB)",
+                                  color: vramMB < DeviceProfile.lowVRAMThresholdMB ? Theme.warn : Theme.text)
+                    Text("MB").font(.system(size: 11)).foregroundColor(Theme.textMuted)
+                }
+            }
+            SettingRow(icon: "rectangle.on.rectangle", title: "分辨率") {
+                Text("\(config.width)×\(config.height)")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(Theme.textMuted)
+            }
+            SettingRow(icon: "ant", title: "JIT",
+                       subtitle: config.enableJIT ? "已开启（调试器授予后生效）" : "已关闭",
+                       iconColor: config.enableJIT ? Theme.accent : Theme.textFaint) {
+                Text(config.enableJIT ? "开" : "关")
+                    .font(.system(size: 12)).foregroundColor(Theme.textMuted)
+            }
+        }
+    }
+
+    private var startLink: some View {
+        NavigationLink {
+            SessionView(config: config)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "play.fill")
+                Text("Start").font(.system(size: 15, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(Theme.accent)
+            .foregroundColor(Theme.canvas)
+            .cornerRadius(12)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var secondaryActions: some View {
+        HStack(spacing: 12) {
             Button {
-                if !running { Task { await runSequence() } }
+                onReconfigure()
             } label: {
-                Label("Start", systemImage: "play.fill")
+                Label("修改配置", systemImage: "slider.horizontal.3")
+                    .font(.system(size: 12))
                     .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(running)
+                    .padding(.vertical, 12)
+                    .background(Theme.surface)
+                    .foregroundColor(Theme.text)
+                    .cornerRadius(10)
+            }.buttonStyle(.plain)
 
-            Text("点 Start 才会运行。启动过程会在下面显示，日志在最后一段实时滚动。")
-                .font(.caption).foregroundColor(.secondary)
-        }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var progressCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("启动步骤").font(.headline)
-            ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
-                HStack(spacing: 10) {
-                    Image(systemName: icon(for: step.state))
-                        .foregroundColor(color(for: step.state))
-                        .frame(width: 20)
-                    Text(step.title)     // human-language title here, not in log
-                        .font(.body)
-                    Spacer()
-                    Text(step.state).font(.caption).foregroundColor(.secondary)
-                }
-            }
-        }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    private var logCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("实时日志（原文）").font(.headline)
-                Spacer()
-                Text("每行立即存盘").font(.caption).foregroundColor(.secondary)
-            }
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(entries.suffix(200)) { e in
-                            Text(rawLine(e))
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(logColor(for: e.level))
-                                .textSelection(.enabled)
-                                .id(e.id)
-                        }
-                    }
-                }
-                .frame(minHeight: 220, maxHeight: 320)
-                .onChange(of: entries.count) { _ in
-                    if let last = entries.last { proxy.scrollTo(last.id, anchor: .bottom) }
-                }
-            }
-        }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    // Raw log format, identical to what lands in iosonios.log.
-    private func rawLine(_ e: RyLog.Entry) -> String {
-        "[\(e.time)] \(e.level.uppercased()) \(e.tag): \(e.message)"
-    }
-
-    private func startLiveRefresh() {
-        refreshTask?.cancel()
-        refreshTask = Task {
-            while !Task.isCancelled {
-                entries = RyLog.recent(200)
-                try? await Task.sleep(nanoseconds: 400_000_000)
-            }
-        }
-    }
-
-    private func runSequence() async {
-        running = true
-        steps = stepTitles.map { BootStep(title: $0) }
-        entries = RyLog.recent(200)
-
-        await setStep(0, "进行中")
-        RyLog.log("boot", "device=\(ProcessInfo.processInfo.machineName) ios=\(UIDevice.current.systemVersion)")
-        await setStep(0, "完成")
-
-        await setStep(1, "进行中")
-        RyLog.ensureBundledAssets()
-        let count = probeAssets()
-        await setStep(1, count > 0 ? "完成" : "注意")
-
-        await setStep(2, "进行中")
-        let result = RyEngineSelfTest.run()
-        await setStep(2, result.pagesMatch ? "完成" : "注意")
-
-        await setStep(3, "进行中")
-        await setStep(3, result.jitOK ? "完成" : "注意")
-
-        await setStep(4, "进行中")
-        RyLog.log("boot", "live log ready")
-        await setStep(4, "完成")
-
-        running = false
-    }
-
-    private func probeAssets() -> Int {
-        let fm = FileManager.default
-        let docs = RyLog.documentsURL
-        let needed = ["bootkc", "dtree", "ramdisk.dmg", "trustcache", "nvram.bin"]
-        let found = needed.filter { fm.fileExists(atPath: docs.appendingPathComponent($0).path) }
-        RyLog.log("assets", "found \(found.count)/\(needed.count): \(found.joined(separator: ", "))")
-        return found.count
-    }
-
-    private func setStep(_ index: Int, _ state: String) async {
-        guard index < steps.count else { return }
-        var copy = steps
-        copy[index].state = state
-        steps = copy
-        try? await Task.sleep(nanoseconds: 120_000_000)
-    }
-
-    private func icon(for state: String) -> String {
-        switch state {
-        case "完成": return "checkmark.circle.fill"
-        case "注意": return "exclamationmark.triangle.fill"
-        case "进行中": return "circle.circle.fill"
-        default: return "circle"
-        }
-    }
-
-    private func color(for state: String) -> Color {
-        switch state {
-        case "完成": return .green
-        case "注意": return .orange
-        case "进行中": return .accentColor
-        default: return .secondary
-        }
-    }
-
-    private func logColor(for level: String) -> Color {
-        switch level {
-        case "error": return .red
-        case "warn": return .orange
-        case "guest": return .purple
-        default: return .primary
+            Button {
+                onSettings()
+            } label: {
+                Label("设置", systemImage: "gearshape")
+                    .font(.system(size: 12))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Theme.surface)
+                    .foregroundColor(Theme.text)
+                    .cornerRadius(10)
+            }.buttonStyle(.plain)
         }
     }
 }
