@@ -1,74 +1,145 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var tab = 0
+    @State private var config: VMConfig? = VMConfig.load()
+    @State private var showConfig = false
+
     var body: some View {
-        TabView(selection: $tab) {
-            BootView().tabItem { Label("启动", systemImage: "power") }.tag(0)
-            LogView().tabItem { Label("日志", systemImage: "doc.text.magnifyingglass") }.tag(1)
-            AboutView().tabItem { Label("关于", systemImage: "info.circle") }.tag(2)
+        Group {
+            if let cfg = config {
+                MainView(config: cfg,
+                         onReconfigure: { showConfig = true },
+                         onDelete: {
+                             VMConfig.clear()
+                             config = nil
+                         })
+                .sheet(isPresented: $showConfig) {
+                    ConfigView(config: cfg) { newConfig in
+                        showConfig = false
+                        config = newConfig
+                    }
+                }
+            } else {
+                ConfigView { cfg in
+                    config = cfg
+                }
+            }
         }
     }
 }
 
-// MARK: - Boot view: plain-language status + live log, right on launch
+// Allow ConfigView to be opened with an existing config to edit it.
+extension ConfigView {
+    init(config: VMConfig, onCreate: @escaping (VMConfig) -> Void) {
+        self._config = State(initialValue: config)
+        self.onCreate = onCreate
+    }
+}
 
-struct BootView: View {
+// MARK: - Main view: Start button, human-language card titles, raw log output
+
+struct MainView: View {
+    let config: VMConfig
+    let onReconfigure: () -> Void
+    let onDelete: () -> Void
+
     @State private var entries: [RyLog.Entry] = []
+    @State private var running = false
     @State private var steps: [BootStep] = []
-    @State private var booted = false
+    @State private var refreshTask: Task<Void, Never>?
 
     struct BootStep: Identifiable {
         let id = UUID()
-        let text: String
-        var state: String = "等待"   // 等待 / 进行中 / 完成 / 注意
+        let title: String        // human-language, shown in card header
+        var state: String = "等待"
     }
 
-    private let stepsDef = [
-        "读取设备与系统信息",
-        "检查固件资产",
-        "检测内存页大小",
-        "测试可执行内存（JIT）",
-        "打开实时日志"
+    private let stepTitles = [
+        "正在读取设备与系统信息",
+        "正在检查固件资产",
+        "正在检测内存页大小",
+        "正在探测可执行内存",
+        "正在打开实时日志",
     ]
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    header
-                    statusCard
-                    liveLogCard
+                    configCard
+                    controlsCard
+                    if !steps.isEmpty { progressCard }
+                    logCard
                 }
                 .padding()
             }
-            .navigationTitle("iOSoniOS · 启动")
+            .navigationTitle(config.name)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("重跑") { Task { await runBoot() } }
+                    Menu {
+                        Button("修改配置", action: onReconfigure)
+                        Button("删除虚拟机", role: .destructive, action: onDelete)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
                 }
             }
-            .task { if !booted { await runBoot() } }
+            .task {
+                entries = RyLog.recent(200)
+                startLiveRefresh()
+            }
+            .onDisappear { refreshTask?.cancel() }
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("在 iPad 里运行 iOS").font(.title2.weight(.semibold))
-            Text("这是第一阶段：先把虚拟机的引擎和启动链跑通，还看不到桌面。")
-                .font(.subheadline).foregroundColor(.secondary)
+    private var configCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("虚拟机配置", systemImage: "slider.horizontal.3")
+                .font(.headline)
+            HStack { Text("内存"); Spacer(); Text("\(config.ramMB) MB").monospaced() }
+            HStack { Text("CPU"); Spacer(); Text("\(config.cpuCount) 核心").monospaced() }
+            HStack { Text("分辨率"); Spacer(); Text("\(config.width) × \(config.height)").monospaced() }
+            HStack { Text("JIT"); Spacer(); Text(config.enableJIT ? "开启" : "关闭").monospaced() }
+            HStack { Text("启动参数"); Spacer(); Text(config.bootArgs).monospaced() }
         }
+        .padding()
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private var statusCard: some View {
+    private var controlsCard: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Image(systemName: running ? "bolt.horizontal.fill" : "play.circle.fill")
+                    .font(.title2)
+                Text(running ? "正在启动…" : "准备就绪")
+                    .font(.headline)
+                Spacer()
+            }
+            Button {
+                if !running { Task { await runSequence() } }
+            } label: {
+                Label("Start", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(running)
+
+            Text("点 Start 才会运行。启动过程会在下面显示，日志在最后一段实时滚动。")
+                .font(.caption).foregroundColor(.secondary)
+        }
+        .padding()
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var progressCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("启动进度").font(.headline)
+            Text("启动步骤").font(.headline)
             ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
                 HStack(spacing: 10) {
                     Image(systemName: icon(for: step.state))
                         .foregroundColor(color(for: step.state))
                         .frame(width: 20)
-                    Text("\(i + 1). \(step.text)")
+                    Text(step.title)     // human-language title here, not in log
                         .font(.body)
                     Spacer()
                     Text(step.state).font(.caption).foregroundColor(.secondary)
@@ -79,30 +150,26 @@ struct BootView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private var liveLogCard: some View {
+    private var logCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("实时日志").font(.headline)
+                Text("实时日志（原文）").font(.headline)
                 Spacer()
                 Text("每行立即存盘").font(.caption).foregroundColor(.secondary)
             }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(entries.suffix(120)) { e in
-                            HStack(alignment: .top, spacing: 6) {
-                                Text(e.time).font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                Text(e.message)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(logColor(for: e.level))
-                                    .textSelection(.enabled)
-                            }
-                            .id(e.id)
+                        ForEach(entries.suffix(200)) { e in
+                            Text(rawLine(e))
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(logColor(for: e.level))
+                                .textSelection(.enabled)
+                                .id(e.id)
                         }
                     }
                 }
-                .frame(height: 260)
+                .frame(minHeight: 220, maxHeight: 320)
                 .onChange(of: entries.count) { _ in
                     if let last = entries.last { proxy.scrollTo(last.id, anchor: .bottom) }
                 }
@@ -112,59 +179,56 @@ struct BootView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
-    // MARK: - Boot sequence, one step at a time with human-readable narration
+    // Raw log format, identical to what lands in iosonios.log.
+    private func rawLine(_ e: RyLog.Entry) -> String {
+        "[\(e.time)] \(e.level.uppercased()) \(e.tag): \(e.message)"
+    }
 
-    private func runBoot() async {
-        booted = true
-        steps = stepsDef.map { BootStep(text: $0) }
-        entries = RyLog.recent(200)
-
-        await setStep(0, "进行中")
-        say("你好，我是这台虚拟 iOS 的启动助手。下面每一步我都会用大白话告诉你发生了什么。")
-        say("设备是 \(ProcessInfo.processInfo.machineName)，系统 \(UIDevice.current.systemVersion)。")
-        await setStep(0, "完成")
-
-        await setStep(1, "进行中")
-        let assets = probeAssets()
-        if assets == 0 {
-            say("注意：还没找到内核和设备树文件。界面能正常用，但还启动不了虚拟系统。")
-            await setStep(1, "注意")
-        } else {
-            say("找到 \(assets) 个固件文件，启动材料就绪。")
-            await setStep(1, "完成")
-        }
-
-        await setStep(2, "进行中")
-        let result = RyEngineSelfTest.run()
-        if result.pagesMatch {
-            say("内存页大小是 16384 字节，和 iOS 内核一致，可以直接映射，不用改内核。")
-            await setStep(2, "完成")
-        } else {
-            say("注意：内存页大小不是 16384，后面要改内核才能跑。")
-            await setStep(2, "注意")
-        }
-
-        await setStep(3, "进行中")
-        if result.jitOK {
-            say("好消息：可执行内存测试通过，这个 App 可以运行 JIT，虚拟机速度有保证。")
-            await setStep(3, "完成")
-        } else {
-            say(result.detail)
-            say("这说明当前签名不允许运行动态生成的代码。别担心，第一阶段只是自检，不影响看日志；真正跑内核时需要换成开发者签名并附加调试器。")
-            await setStep(3, "注意")
-        }
-
-        await setStep(4, "进行中")
-        say("实时日志已经打开，下面所有底层输出都会一边显示一边存到文件里。")
-        await setStep(4, "完成")
-
-        // start live refresh after the boot narration completes
-        Task {
-            while true {
+    private func startLiveRefresh() {
+        refreshTask?.cancel()
+        refreshTask = Task {
+            while !Task.isCancelled {
                 entries = RyLog.recent(200)
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
         }
+    }
+
+    private func runSequence() async {
+        running = true
+        steps = stepTitles.map { BootStep(title: $0) }
+        entries = RyLog.recent(200)
+
+        await setStep(0, "进行中")
+        RyLog.log("boot", "device=\(ProcessInfo.processInfo.machineName) ios=\(UIDevice.current.systemVersion)")
+        await setStep(0, "完成")
+
+        await setStep(1, "进行中")
+        RyLog.ensureBundledAssets()
+        let count = probeAssets()
+        await setStep(1, count > 0 ? "完成" : "注意")
+
+        await setStep(2, "进行中")
+        let result = RyEngineSelfTest.run()
+        await setStep(2, result.pagesMatch ? "完成" : "注意")
+
+        await setStep(3, "进行中")
+        await setStep(3, result.jitOK ? "完成" : "注意")
+
+        await setStep(4, "进行中")
+        RyLog.log("boot", "live log ready")
+        await setStep(4, "完成")
+
+        running = false
+    }
+
+    private func probeAssets() -> Int {
+        let fm = FileManager.default
+        let docs = RyLog.documentsURL
+        let needed = ["bootkc", "dtree", "ramdisk.dmg", "trustcache", "nvram.bin"]
+        let found = needed.filter { fm.fileExists(atPath: docs.appendingPathComponent($0).path) }
+        RyLog.log("assets", "found \(found.count)/\(needed.count): \(found.joined(separator: ", "))")
+        return found.count
     }
 
     private func setStep(_ index: Int, _ state: String) async {
@@ -173,23 +237,6 @@ struct BootView: View {
         copy[index].state = state
         steps = copy
         try? await Task.sleep(nanoseconds: 120_000_000)
-    }
-
-    private func say(_ text: String) {
-        RyLog.log("启动", text, level: .info)
-        entries = RyLog.recent(200)
-    }
-
-    private func probeAssets() -> Int {
-        let fm = FileManager.default
-        let docs = RyLog.documentsURL
-        let needed = ["bootkc", "dtree", "ramdisk.dmg", "trustcache", "nvram.bin"]
-        let found = needed.filter { fm.fileExists(atPath: docs.appendingPathComponent($0).path) }
-        RyLog.log("资产", "Documents 里找到 \(found.count)/\(needed.count) 个：\(found.joined(separator: ", "))")
-        // Give the app a chance to copy bundled assets in on first launch.
-        RyLog.ensureBundledAssets()
-        let after = needed.filter { fm.fileExists(atPath: docs.appendingPathComponent($0).path) }
-        return after.count
     }
 
     private func icon(for state: String) -> String {
@@ -217,35 +264,5 @@ struct BootView: View {
         case "guest": return .purple
         default: return .primary
         }
-    }
-}
-
-struct AboutView: View {
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("我们在做什么").font(.title3.weight(.semibold))
-                Text("""
-                目标：在 iPad 的一个 App 里，用软件模拟出一台苹果电脑需要的硬件，
-                然后让真正的 iOS 内核在里面启动起来。
-
-                第一步（已完成）：从固件里取出 A14 的内核和设备树，改好设备树。
-                第二步（当前）：在 App 里把 JIT 引擎跑起来，确认能执行代码。
-                第三步：把内核喂进去，追到第一行串口输出。
-                后面才是画面、触控、桌面。
-
-                所有日志每一行都会立刻写到文件，崩溃也不会丢。
-                """)
-                .font(.system(.body, design: .monospaced))
-
-                Text("参考资料").font(.title3.weight(.semibold))
-                Link("darwin-vm", destination: URL(string: "https://github.com/jprx/darwin-vm")!)
-                Link("Henge", destination: URL(string: "https://github.com/Leviidev/Henge")!)
-                Link("UniXNU", destination: URL(string: "https://github.com/UniXNU/UniXNU")!)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
-        }
-        .navigationTitle("关于")
     }
 }

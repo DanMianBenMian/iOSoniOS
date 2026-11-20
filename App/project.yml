@@ -36,6 +36,8 @@ targets:
         excludes:
           - "Info.plist"
           - "iOSoniOS.entitlements"
+      - path: Assets.xcassets
+        type: folder
     entitlements:
       path: Sources/iOSoniOS.entitlements
     dependencies: []
