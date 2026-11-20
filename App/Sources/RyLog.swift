@@ -99,15 +99,14 @@ enum RyLog {
         }
     }
 
+    // A C signal handler must be a @convention(c) closure that captures no
+    // context, so the fds it needs are mirrored into file-scope globals.
+    fileprivate static var handlerLogFD: Int32 { logFD }
+    fileprivate static var handlerPipeFD: Int32 { pipeWriteFD }
+
     private static func installCrashHandlers() {
         for sig in [SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE] {
-            signal(sig) { s in
-                let msg = "CRASH signal \(s)\n"
-                msg.withCString { _ = write(logFD, $0, strlen($0)) }
-                fsync(logFD)
-                _ = write(pipeWriteFD, msg, msg.utf8.count)
-                exit(128 + s)
-            }
+            signal(sig, crashHandler)
         }
     }
 
@@ -172,6 +171,17 @@ enum RyLog {
     static func clearRing() {
         ringLock.lock(); ring.removeAll(); ringLock.unlock()
     }
+}
+
+/// Signal-safe crash handler: no allocations, no captured context.
+private let crashHandler: @convention(c) (Int32) -> Void = { s in
+    let fd = RyLog.handlerLogFD
+    let msg = "CRASH signal \(s)\n"
+    msg.withCString { _ = write(fd, $0, strlen($0)) }
+    if fd >= 0 { fsync(fd) }
+    let pipe = RyLog.handlerPipeFD
+    if pipe >= 0 { _ = write(pipe, msg, msg.utf8.count) }
+    exit(128 + s)
 }
 
 extension ProcessInfo {
