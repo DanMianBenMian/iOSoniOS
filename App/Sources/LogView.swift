@@ -55,26 +55,26 @@ struct LogView: View {
                 }
 
                 HStack {
-                    Picker("Level", selection: $levelFilter) {
+                    Picker("级别", selection: $levelFilter) {
                         ForEach(RyLog.Level.allCases, id: \.self) { l in
                             Text(l.rawValue).tag(l)
                         }
                     }
                     .pickerStyle(.segmented)
-                    Toggle("Auto-scroll", isOn: $autoScroll)
+                    Toggle("自动滚动", isOn: $autoScroll)
                         .toggleStyle(.switch)
                         .font(.caption)
                 }
                 .padding(8)
             }
-            .searchable(text: $search, prompt: "Filter log")
-            .navigationTitle("Engine log")
+            .searchable(text: $search, prompt: "搜索日志")
+            .navigationTitle("引擎日志")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showShare = true
                     } label: {
-                        Label("Export", systemImage: "square.and.arrow.up")
+                        Label("导出", systemImage: "square.and.arrow.up")
                     }
                 }
             }

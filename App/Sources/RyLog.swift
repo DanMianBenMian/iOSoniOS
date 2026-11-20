@@ -171,6 +171,25 @@ enum RyLog {
     static func clearRing() {
         ringLock.lock(); ring.removeAll(); ringLock.unlock()
     }
+
+    /// Copy assets staged in the app bundle into Documents on first launch, so
+    /// the Files app can see them and the VM can read/write them.
+    static func ensureBundledAssets() {
+        let fm = FileManager.default
+        let docs = documentsURL
+        for name in ["bootkc", "dtree", "ramdisk.dmg", "trustcache", "nvram.bin"] {
+            let dst = docs.appendingPathComponent(name)
+            if fm.fileExists(atPath: dst.path) { continue }
+            guard let src = Bundle.main.url(forResource: name, withExtension: nil,
+                                            subdirectory: "Assets") else { continue }
+            do {
+                try fm.copyItem(at: src, to: dst)
+                log("资产", "已内置 → Documents/\(name)")
+            } catch {
+                log("资产", "复制 \(name) 失败：\(error.localizedDescription)", level: .warn)
+            }
+        }
+    }
 }
 
 /// Signal-safe crash handler: no allocations, no captured context.

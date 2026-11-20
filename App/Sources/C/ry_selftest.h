@@ -5,6 +5,8 @@
 
 typedef struct {
     int jit_ok;
+    int mmap_ok;
+    int fault_signal;
     int page_size;
     int pages_match;
     uint32_t value;
