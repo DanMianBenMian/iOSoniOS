@@ -43,6 +43,11 @@ typedef struct {
     int last_error;
     uint32_t svc_imm;
     uint64_t svc_pc;
+
+    /* Exclusive monitor (LDXR/STXR): one slot is enough for these guests. */
+    uint64_t excl_addr;
+    uint32_t excl_size;
+    uint64_t excl_val;
 } RyInterp;
 
 #ifdef __cplusplus

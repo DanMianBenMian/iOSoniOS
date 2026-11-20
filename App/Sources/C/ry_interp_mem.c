@@ -118,7 +118,7 @@ uint64_t ry_sysreg_read(RyInterp *in, unsigned op0, unsigned op1,
             if (crm == 0 && op2 == 2) return c->tpidr_el0;
             if (crm == 0 && op2 == 3) return c->tpidrro_el0;
             if (crm == 0 && op2 == 4) return c->tpidr_el1;
-            if (crm == 0 && op2 == 0) return htole64((uint64_t)(in->insns * 24));
+            if (crm == 0 && op2 == 0) return (uint64_t)(in->insns * 24);
             break;
         case 14:
             if (crm == 0 && op2 == 0) return c->cntfrq_el0 ? c->cntfrq_el0 : 24000000ull;
