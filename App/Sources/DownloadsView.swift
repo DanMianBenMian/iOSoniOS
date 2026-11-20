@@ -1,12 +1,16 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
-/// In-app download page: firmware straight from Apple's CDN, plus the IPAs
-/// already staged in the app's Documents folder.
+/// In-app download page: firmware downloads inside the app with live progress,
+/// plus importing an .ipsw already on the device.
 struct DownloadsView: View {
     private let ipswURL = URL(string:
         "https://updates.cdn-apple.com/2026SpringSeed/fullrestores/140-21639/1B98799E-8A35-4D79-A826-78ABE1659FCF/iPad_Fall_2022_27.0_24A5370h_Restore.ipsw")!
 
+    @StateObject private var downloader = FirmwareDownloader()
     @State private var localFiles: [String] = []
+    @State private var showImporter = false
+    @State private var importMessage: String?
 
     var body: some View {
         ZStack {
@@ -15,14 +19,10 @@ struct DownloadsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     sectionTitle("固件")
                     ipswCard
+                    importCard
                     sectionTitle("本机文件")
-                    if localFiles.isEmpty {
-                        emptyCard
-                    } else {
-                        ForEach(localFiles, id: \.self) { name in
-                            localCard(name)
-                        }
-                    }
+                    if localFiles.isEmpty { emptyCard }
+                    else { ForEach(localFiles, id: \.self) { localCard($0) } }
                     hint
                 }
                 .padding(20)
@@ -32,12 +32,19 @@ struct DownloadsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .onAppear(perform: scanLocal)
+        .onChange(of: downloader.phase) { phase in
+            if case .finished = phase { scanLocal() }
+        }
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: [.data],
+                      allowsMultipleSelection: false) { result in
+            handleImport(result)
+        }
     }
 
     private func sectionTitle(_ t: String) -> some View {
         Text(t).font(.system(size: 11, weight: .semibold))
-            .foregroundColor(Theme.textFaint)
-            .textCase(.uppercase)
+            .foregroundColor(Theme.textFaint).textCase(.uppercase)
     }
 
     private var ipswCard: some View {
@@ -58,33 +65,120 @@ struct DownloadsView: View {
                         .foregroundColor(Theme.textMuted)
                 }
                 Spacer()
+                Text("10.73 GB").font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Theme.textFaint)
             }
 
-            Text("10.73 GB · 直连 updates.cdn-apple.com，不经过本机，支持断点续传。")
-                .font(.system(size: 11)).foregroundColor(Theme.textMuted)
-
-            Link(destination: ipswURL) {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.down.circle.fill")
-                    Text("用 Safari 下载").font(.system(size: 14, weight: .semibold))
+            if downloader.isActive || isFinished {
+                progressBlock
+            }
+            HStack(spacing: 10) {
+                if downloader.isActive {
+                    Button {
+                        downloader.cancel()
+                    } label: {
+                        Label("取消", systemImage: "xmark.circle")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(maxWidth: .infinity).padding(.vertical, 11)
+                    }
+                    .nativeButton()
+                } else {
+                    Button {
+                        downloader.start(url: ipswURL, suggestedName: "iPad_Fall_2022_27.0_24A5370h_Restore.ipsw")
+                    } label: {
+                        Label("下载到本机", systemImage: "arrow.down.circle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 11)
+                    }
+                    .nativeButton(prominent: true)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
             }
-            .nativeButton(prominent: true)
 
-            Text("下载完成后，用「导入固件」把 .ipsw 放进这台设备的 Documents，创建虚拟机时就会用到。")
+            Text("直连 updates.cdn-apple.com，在本 App 内下载，完成后自动存进 Documents。中断可续传。")
                 .font(.system(size: 10)).foregroundColor(Theme.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
         .background(Theme.surface)
         .cornerRadius(12)
     }
 
+    private var isFinished: Bool {
+        if case .finished = downloader.phase { return true }
+        return false
+    }
+
+    private var progressBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.surfaceHi).frame(height: 6)
+                    Capsule()
+                        .fill(progressTint)
+                        .frame(width: max(6, geo.size.width * CGFloat(downloader.progress)), height: 6)
+                        .animation(.easeOut(duration: 0.25), value: downloader.progress)
+                }
+            }
+            .frame(height: 6)
+
+            HStack(spacing: 6) {
+                Text(String(format: "%.1f%%", downloader.progress * 100))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(progressTint)
+                Text("·").foregroundColor(Theme.textFaint)
+                Text("\(fmt(downloader.receivedBytes)) / \(fmt(downloader.totalBytes))")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(Theme.textMuted)
+                Spacer()
+                if downloader.bytesPerSecond > 0, case .downloading = downloader.phase {
+                    Text("\(fmt(Int64(downloader.bytesPerSecond)))/s")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Theme.textFaint)
+                }
+            }
+        }
+    }
+
+    private var progressTint: Color {
+        switch downloader.phase {
+        case .failed: return Theme.danger
+        case .finished: return Theme.ok
+        default: return Theme.accent
+        }
+    }
+
+    private var importCard: some View {
+        Button {
+            showImporter = true
+        } label: {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Theme.iconDownload)
+                    .frame(width: 29, height: 29)
+                    .overlay(Image(systemName: "square.and.arrow.down.fill")
+                        .font(.system(size: 13, weight: .semibold)).foregroundColor(.white))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("导入 IPSW").font(.system(size: 14, weight: .medium))
+                        .foregroundColor(Theme.text)
+                    Text(importMessage ?? "从「文件」里选一个 .ipsw 放进本 App")
+                        .font(.system(size: 11))
+                        .foregroundColor(importMessage == nil ? Theme.textMuted : Theme.ok)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12)).foregroundColor(Theme.textFaint)
+            }
+            .padding(14)
+            .background(Theme.surface)
+            .cornerRadius(12)
+        }
+        .buttonStyle(.plain)
+    }
+
     private var emptyCard: some View {
         HStack(spacing: 10) {
             Image(systemName: "tray").foregroundColor(Theme.textFaint)
-            Text("还没有放入固件文件").font(.system(size: 12)).foregroundColor(Theme.textMuted)
+            Text("还没有固件文件").font(.system(size: 12)).foregroundColor(Theme.textMuted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -98,7 +192,7 @@ struct DownloadsView: View {
         return ShareLink(item: url) {
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Theme.iconDownload)
+                    .fill(Theme.iconFirmware)
                     .frame(width: 29, height: 29)
                     .overlay(Image(systemName: "doc.fill")
                         .font(.system(size: 13, weight: .semibold)).foregroundColor(.white))
@@ -120,15 +214,42 @@ struct DownloadsView: View {
     }
 
     private var hint: some View {
-        Text("隧道只用于本 App 之外的分发。固件下载走 Apple 服务器，与隧道无关。")
+        Text("创建虚拟机时会自动使用这里的 .ipsw。测试版允许没有固件直接创建。")
             .font(.system(size: 10)).foregroundColor(Theme.textFaint)
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    private func fmt(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
     private func scanLocal() {
         let fm = FileManager.default
-        let docs = RyLog.documentsURL
-        let names = (try? fm.contentsOfDirectory(atPath: docs.path)) ?? []
+        let names = (try? fm.contentsOfDirectory(atPath: RyLog.documentsURL.path)) ?? []
         localFiles = names.filter { $0.hasSuffix(".ipsw") || $0.hasSuffix(".ipa") }.sorted()
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let src = urls.first else { return }
+            let dest = RyLog.documentsURL.appendingPathComponent(src.lastPathComponent)
+            let needsScope = src.startAccessingSecurityScopedResource()
+            defer { if needsScope { src.stopAccessingSecurityScopedResource() } }
+            do {
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try FileManager.default.removeItem(at: dest)
+                }
+                try FileManager.default.copyItem(at: src, to: dest)
+                importMessage = "已导入 \(src.lastPathComponent)"
+                RyLog.log("import", "copied \(src.lastPathComponent) to Documents", level: .info)
+                scanLocal()
+            } catch {
+                importMessage = "导入失败：\(error.localizedDescription)"
+                RyLog.log("import", "failed: \(error.localizedDescription)", level: .error)
+            }
+        case .failure(let error):
+            importMessage = "导入取消或失败：\(error.localizedDescription)"
+        }
     }
 }

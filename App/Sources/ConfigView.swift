@@ -153,7 +153,7 @@ struct ConfigView: View {
 
     private var vramCard: some View {
         SettingRow(icon: "rectangle.3.group.fill", title: "显存",
-                   subtitle: "按内存 / 核心 / 机型估算",
+                   subtitle: "与内存共享预算，内存越高显存越低",
                    iconColor: vramLow ? Theme.warn : Theme.iconVRAM) {
             HStack(spacing: 4) {
                 RollingNumber(value: "\(vramMB)", color: vramLow ? Theme.warn : Theme.text)

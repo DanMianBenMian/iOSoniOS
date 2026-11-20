@@ -59,8 +59,13 @@ enum DeviceProfile {
         return String(cString: buf)
     }
 
-    /// Guest GPU memory estimate. Scales with guest RAM, CPU count and a
-    /// rough device class factor. A14-class devices get the base multiplier.
+    /// Guest GPU memory estimate.
+    ///
+    /// This is a BUDGET, not an independent pool. iOS is unified-memory: the
+    /// guest's RAM and its VRAM both come out of the same per-app jetsam
+    /// ceiling. So raising RAM (or CPU count, which costs page tables and
+    /// per-core JIT/TLB state) must LOWER the VRAM figure, not raise it.
+    /// An earlier version scaled VRAM up with RAM, which was backwards.
     static func estimatedVRAMMB(ramGB: Double, cpuCores: Int) -> Int {
         let deviceFactor: Double
         let name = chipName
@@ -68,11 +73,25 @@ enum DeviceProfile {
         else if name.contains("iPad13") || name.contains("iPhone13") { deviceFactor = 1.0 }  // A14 class
         else if name.hasPrefix("iPad") || name.hasPrefix("iPhone") { deviceFactor = 0.85 }
         else { deviceFactor = 1.5 }  // M-series
-        let base = ramGB * 192.0
-        let cpu = 0.85 + Double(cpuCores) * 0.12
-        return Int((base * cpu * deviceFactor).rounded())
+
+        // Total guest budget the host can afford, in MB.
+        let budgetMB = max(2048.0, jetsamCeilingGB * 1024.0 * 1.5)
+        let ramMB = ramGB * 1024.0
+        let freeRatio = max(0.0, min(1.0, 1.0 - ramMB / budgetMB))
+
+        // More cores = more per-core VM/JIT state, so less left for the GPU.
+        let cpuPenalty = max(0.55, 1.0 - Double(max(0, cpuCores - 1)) * 0.07)
+
+        // 1 GiB guest leaves ~0.67 of the budget free on a 4 GB iPad.
+        let base = 1024.0 * freeRatio * cpuPenalty * deviceFactor
+        return max(128, min(1024, Int(base.rounded())))
     }
 
     /// VRAM below this is considered low and gets the warning color.
     static var lowVRAMThresholdMB: Int { 384 }
+
+    /// True when guest RAM is high enough that VRAM has been squeezed flat.
+    static func vramIsSqueezed(ramGB: Double) -> Bool {
+        estimatedVRAMMB(ramGB: ramGB, cpuCores: 1) <= 160
+    }
 }

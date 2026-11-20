@@ -89,6 +89,9 @@ struct MainView: View {
                 RollingNumber(value: "\(config.cpuCount)")
             }
             SettingRow(icon: "rectangle.3.group.fill", title: "显存",
+                       subtitle: vramMB < DeviceProfile.lowVRAMThresholdMB
+                           ? "内存占用高，显存已被压缩"
+                           : "与内存共享同一预算",
                        iconColor: vramMB < DeviceProfile.lowVRAMThresholdMB ? Theme.warn : Theme.iconVRAM) {
                 HStack(spacing: 2) {
                     RollingNumber(value: "\(vramMB)",
@@ -102,11 +105,16 @@ struct MainView: View {
                     .foregroundColor(Theme.textMuted)
             }
             SettingRow(icon: "ant.fill", title: "JIT",
-                       subtitle: config.enableJIT ? "已开启（调试器授予后生效）" : "已关闭",
-                       iconColor: config.enableJIT ? Theme.iconJIT : Theme.textFaint) {
-                Text(config.enableJIT ? "开" : "关")
-                    .font(.system(size: 12)).foregroundColor(Theme.textMuted)
+                       subtitle: DebugCapability.jitAvailable
+                           ? "已检测到调试权限"
+                           : "未检测到调试权限，已禁用",
+                       iconColor: (DebugCapability.jitAvailable && config.enableJIT)
+                           ? Theme.iconJIT : Theme.textFaint) {
+                Text(DebugCapability.jitAvailable ? (config.enableJIT ? "开" : "关") : "不可用")
+                    .font(.system(size: 12))
+                    .foregroundColor(DebugCapability.jitAvailable ? Theme.textMuted : Theme.warn)
             }
+            .opacity(DebugCapability.jitAvailable ? 1 : 0.55)
         }
     }
 
@@ -137,19 +145,11 @@ struct MainView: View {
             }
             .nativeButton()
 
+            // Settings lives in the navigation-bar gear; this row is edit-config only.
             Button {
                 onReconfigure()
             } label: {
-                Label("配置", systemImage: "slider.horizontal.3")
-                    .font(.system(size: 12))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-            }.nativeButton()
-
-            Button {
-                onSettings()
-            } label: {
-                Label("设置", systemImage: "gearshape")
+                Label("编辑配置", systemImage: "slider.horizontal.3")
                     .font(.system(size: 12))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)

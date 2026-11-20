@@ -5,6 +5,7 @@ struct SettingsView: View {
     let onDismiss: () -> Void
 
     @State private var jitExplanation = false
+    @State private var jitAvailable = DebugCapability.jitAvailable
 
     var body: some View {
         NavigationStack {
@@ -13,10 +14,32 @@ struct SettingsView: View {
                 List {
                     Section {
                         SettingRow(icon: "ant.fill", title: "启用 JIT",
-                                   subtitle: "动态代码生成，虚拟 CPU 提速",
-                                   iconColor: config.enableJIT ? Theme.iconJIT : Theme.textFaint) {
-                            Toggle("", isOn: $config.enableJIT)
-                                .labelsHidden().tint(Theme.accent)
+                                   subtitle: jitAvailable
+                                       ? "动态代码生成，虚拟 CPU 提速"
+                                       : "不可用：未检测到调试权限",
+                                   iconColor: (jitAvailable && config.enableJIT) ? Theme.iconJIT : Theme.textFaint) {
+                            Toggle("", isOn: Binding(
+                                get: { jitAvailable && config.enableJIT },
+                                set: { config.enableJIT = $0 }
+                            ))
+                            .labelsHidden()
+                            .tint(Theme.accent)
+                            .disabled(!jitAvailable)
+                            .opacity(jitAvailable ? 1 : 0.45)
+                        }
+
+                        if !jitAvailable {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 12)).foregroundColor(Theme.warn)
+                                Text(DebugCapability.statusText)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(Theme.warn.opacity(0.92))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(10)
+                            .background(Theme.warn.opacity(0.09))
+                            .cornerRadius(8)
                         }
 
                         Button {
