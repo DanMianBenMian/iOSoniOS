@@ -40,14 +40,6 @@ targets:
           - "iOSoniOS.entitlements"
       - path: Assets.xcassets
         buildPhase: resources
-      # Henge's arm64 translation engine. core/ is self-contained (no devices/
-      # needed): translator, software MMU, exception handling, dispatcher.
-      - path: ../Henge-main/core
-        includes:
-          - "*.c"
-      - path: ../Henge-main/host/jit_region.c
-      # The engine's assembly entry: hv_enter/hv_exit/helper+chain+ijc thunks.
-      - path: ../Henge-main/host/enter.S
     entitlements:
       path: Sources/iOSoniOS.entitlements
     dependencies: []

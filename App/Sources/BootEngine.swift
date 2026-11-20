@@ -125,13 +125,15 @@ final class BootEngine: ObservableObject {
             append("引擎未就绪，跳过指令测试", .warn)
             return
         }
+        // Pure interpreter: no executable memory, so this is safe under any
+        // signature and cannot be killed by AMFI.
         var status = RyEngineStatus()
         let rc = ry_engine_selftest(&status)
         let detail = String(cString: ry_engine_detail(&status))
         if rc == 0 {
-            append("翻译器自测通过：guest 指令执行并返回 \(status.sample_result)", .ok)
+            append("解释器自测通过：\(detail)", .ok)
         } else {
-            append("翻译器自测失败 (rc=\(rc))：\(detail)", .error)
+            append("解释器自测失败 (rc=\(rc))：\(detail)", .error)
         }
     }
 
