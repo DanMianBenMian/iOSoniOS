@@ -100,10 +100,20 @@ struct SettingRow<Content: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(iconColor)
-                .frame(width: 26, alignment: .center)
+            // iOS Settings-style squircle tile: 29pt, 7pt radius, solid fill,
+            // white glyph. Reads as a system icon rather than a bare symbol.
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [iconColor.opacity(0.95), iconColor.opacity(0.78)],
+                        startPoint: .top, endPoint: .bottom)
+                )
+                .frame(width: 29, height: 29)
+                .overlay(
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                )
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 14, weight: .medium))
                     .foregroundColor(Theme.text)
@@ -119,5 +129,39 @@ struct SettingRow<Content: View>: View {
         .padding(.horizontal, 14)
         .background(Theme.surface)
         .cornerRadius(12)
+    }
+}
+
+/// iOS 26 native button styles with a graceful fallback, so the binary still
+/// builds and runs on iOS 17 while using Liquid Glass on 26+.
+struct NativeButtonStyle: ViewModifier {
+    let prominent: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            if prominent {
+                content.buttonStyle(.glassProminent).tint(Theme.accent)
+            } else {
+                content.buttonStyle(.glass)
+            }
+        } else {
+            if prominent {
+                content
+                    .background(Theme.accent)
+                    .foregroundColor(Theme.canvas)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                content
+                    .background(Theme.surface)
+                    .foregroundColor(Theme.text)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+    }
+}
+
+extension View {
+    func nativeButton(prominent: Bool = false) -> some View {
+        modifier(NativeButtonStyle(prominent: prominent))
     }
 }

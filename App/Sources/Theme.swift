@@ -27,4 +27,18 @@ enum Theme {
     static let logGuest    = Color(red: 0.639, green: 0.596, blue: 0.831)
     static let logWarn     = warn
     static let logError    = danger
+
+    // Icon accents: one per setting, like the iOS Settings app's tiles.
+    // Muted so they sit inside graphite without shouting.
+    static let iconMemory  = Color(red: 0.376, green: 0.545, blue: 0.780)
+    static let iconCPU     = Color(red: 0.545, green: 0.478, blue: 0.800)
+    static let iconVRAM    = Color(red: 0.616, green: 0.412, blue: 0.702)
+    static let iconDisplay = Color(red: 0.298, green: 0.639, blue: 0.678)
+    static let iconRes     = Color(red: 0.412, green: 0.561, blue: 0.663)
+    static let iconBoot    = Color(red: 0.396, green: 0.443, blue: 0.502)
+    static let iconName    = Color(red: 0.800, green: 0.596, blue: 0.318)
+    static let iconJIT     = Color(red: 0.400, green: 0.667, blue: 0.471)
+    static let iconFirmware = Color(red: 0.780, green: 0.545, blue: 0.290)
+    static let iconDownload = Color(red: 0.322, green: 0.588, blue: 0.780)
+    static let iconInfo    = Color(red: 0.478, green: 0.510, blue: 0.561)
 }

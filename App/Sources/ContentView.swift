@@ -79,31 +79,31 @@ struct MainView: View {
 
     private var specCard: some View {
         VStack(spacing: 10) {
-            SettingRow(icon: "memorychip", title: "内存") {
+            SettingRow(icon: "memorychip.fill", title: "内存", iconColor: Theme.iconMemory) {
                 HStack(spacing: 2) {
                     RollingNumber(value: String(format: "%.1f", Double(config.ramMB)/1024))
                     Text("GiB").font(.system(size: 11)).foregroundColor(Theme.textMuted)
                 }
             }
-            SettingRow(icon: "cpu", title: "CPU 核心") {
+            SettingRow(icon: "cpu.fill", title: "CPU 核心", iconColor: Theme.iconCPU) {
                 RollingNumber(value: "\(config.cpuCount)")
             }
-            SettingRow(icon: "rectangle.3.group", title: "显存",
-                       iconColor: vramMB < DeviceProfile.lowVRAMThresholdMB ? Theme.warn : Theme.accent) {
+            SettingRow(icon: "rectangle.3.group.fill", title: "显存",
+                       iconColor: vramMB < DeviceProfile.lowVRAMThresholdMB ? Theme.warn : Theme.iconVRAM) {
                 HStack(spacing: 2) {
                     RollingNumber(value: "\(vramMB)",
                                   color: vramMB < DeviceProfile.lowVRAMThresholdMB ? Theme.warn : Theme.text)
                     Text("MB").font(.system(size: 11)).foregroundColor(Theme.textMuted)
                 }
             }
-            SettingRow(icon: "rectangle.on.rectangle", title: "分辨率") {
+            SettingRow(icon: "rectangle.on.rectangle.fill", title: "分辨率", iconColor: Theme.iconRes) {
                 Text("\(config.width)×\(config.height)")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(Theme.textMuted)
             }
-            SettingRow(icon: "ant", title: "JIT",
+            SettingRow(icon: "ant.fill", title: "JIT",
                        subtitle: config.enableJIT ? "已开启（调试器授予后生效）" : "已关闭",
-                       iconColor: config.enableJIT ? Theme.accent : Theme.textFaint) {
+                       iconColor: config.enableJIT ? Theme.iconJIT : Theme.textFaint) {
                 Text(config.enableJIT ? "开" : "关")
                     .font(.system(size: 12)).foregroundColor(Theme.textMuted)
             }
@@ -120,26 +120,31 @@ struct MainView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 15)
-            .background(Theme.accent)
             .foregroundColor(Theme.canvas)
-            .cornerRadius(12)
         }
-        .buttonStyle(.plain)
+        .nativeButton(prominent: true)
     }
 
     private var secondaryActions: some View {
         HStack(spacing: 12) {
-            Button {
-                onReconfigure()
+            NavigationLink {
+                DownloadsView()
             } label: {
-                Label("修改配置", systemImage: "slider.horizontal.3")
+                Label("下载", systemImage: "arrow.down.circle")
                     .font(.system(size: 12))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
-                    .background(Theme.surface)
-                    .foregroundColor(Theme.text)
-                    .cornerRadius(10)
-            }.buttonStyle(.plain)
+            }
+            .nativeButton()
+
+            Button {
+                onReconfigure()
+            } label: {
+                Label("配置", systemImage: "slider.horizontal.3")
+                    .font(.system(size: 12))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }.nativeButton()
 
             Button {
                 onSettings()
@@ -148,10 +153,7 @@ struct MainView: View {
                     .font(.system(size: 12))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
-                    .background(Theme.surface)
-                    .foregroundColor(Theme.text)
-                    .cornerRadius(10)
-            }.buttonStyle(.plain)
+            }.nativeButton()
         }
     }
 }

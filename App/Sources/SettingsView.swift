@@ -12,9 +12,9 @@ struct SettingsView: View {
                 Theme.canvas.ignoresSafeArea()
                 List {
                     Section {
-                        SettingRow(icon: "ant", title: "启用 JIT",
+                        SettingRow(icon: "ant.fill", title: "启用 JIT",
                                    subtitle: "动态代码生成，虚拟 CPU 提速",
-                                   iconColor: config.enableJIT ? Theme.accent : Theme.textFaint) {
+                                   iconColor: config.enableJIT ? Theme.iconJIT : Theme.textFaint) {
                             Toggle("", isOn: $config.enableJIT)
                                 .labelsHidden().tint(Theme.accent)
                         }
@@ -44,17 +44,17 @@ struct SettingsView: View {
                     }
 
                     Section {
-                        SettingRow(icon: "memorychip", title: "设备内存", iconColor: Theme.textMuted) {
+                        SettingRow(icon: "memorychip.fill", title: "设备内存", iconColor: Theme.iconMemory) {
                             Text(String(format: "%.1f GiB", DeviceProfile.totalRAMGB))
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(Theme.textMuted)
                         }
-                        SettingRow(icon: "cpu", title: "物理核心", iconColor: Theme.textMuted) {
+                        SettingRow(icon: "cpu.fill", title: "物理核心", iconColor: Theme.iconCPU) {
                             Text("\(DeviceProfile.physicalCores) 核")
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(Theme.textMuted)
                         }
-                        SettingRow(icon: "iphone", title: "机型", iconColor: Theme.textMuted) {
+                        SettingRow(icon: "ipad", title: "机型", iconColor: Theme.iconInfo) {
                             Text(DeviceProfile.chipName)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(Theme.textMuted)
