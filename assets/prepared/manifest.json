@@ -1,0 +1,14 @@
+{
+  "dtree": {
+    "sha256": "b2282119d5596d4fa715fb9deb5ee947645247ede198e149dcded1f743092377",
+    "bytes": 221560
+  },
+  "nvram.bin": {
+    "sha256": "9f1dcbc35c350d6027f98be0f5c8b43b42ca52b7604459c0c42be3aa88913d47",
+    "bytes": 8192
+  },
+  "bootkc": {
+    "sha256": "2c129bf5816dc52597ce73d625490226926a5ca71ba2a005cbeafcc2ae506ee8",
+    "bytes": 68239360
+  }
+}
