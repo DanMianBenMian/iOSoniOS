@@ -50,9 +50,11 @@ void ry_selftest_run(RySelfTestResult *out) {
     uint32_t *code = (uint32_t *)p;
     code[0] = kMovW0_42;
     code[1] = kRet;
-    /* __clear_cache is a no-op on Apple Silicon (coherent I-cache) but call it
-     * through the builtin so the compiler keeps the stores before the call. */
-    __builtin___clear_cache((char *)code, (char *)(code + 2));
+    /* Apple Silicon has coherent I/D caches, so no cache flush is needed.
+     * (Using __builtin___clear_cache here would emit ___clear_cache, which
+     * the iOS SDK does not link.) An atomic barrier keeps the stores ordered
+     * before the indirect call below. */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
     fn_t fn = (fn_t)(uintptr_t)p;
     int r = fn();
