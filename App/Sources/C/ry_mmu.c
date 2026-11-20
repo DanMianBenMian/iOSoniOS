@@ -42,12 +42,6 @@ static char g_uart_shadow[16];
 
 /* ---------------- descriptor walk ---------------- */
 
-typedef struct {
-    uint64_t pa;
-    int ok;         /* 1 translated, 0 fault */
-    int perm;       /* 1 read-only for this access */
-} TransResult;
-
 /* Returns 1 and fills *out on success. */
 static int walk_table(RyInterp *in, uint64_t root, int levels, uint64_t va,
                       TransResult *out) {
