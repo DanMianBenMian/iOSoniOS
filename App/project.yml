@@ -46,6 +46,8 @@ targets:
         includes:
           - "*.c"
       - path: ../Henge-main/host/jit_region.c
+      # The engine's assembly entry: hv_enter/hv_exit/helper+chain+ijc thunks.
+      - path: ../Henge-main/host/enter.S
     entitlements:
       path: Sources/iOSoniOS.entitlements
     dependencies: []
