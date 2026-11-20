@@ -182,9 +182,30 @@ static uint8_t *ptr_of(RyInterp *in, uint64_t addr, unsigned size) {
     return in->mem + addr;
 }
 
-static int do_load(RyInterp *in, uint64_t addr, unsigned size, int sign, uint64_t *out) {
-    uint8_t *p = ptr_of(in, addr, size);
-    if (!p) return -1;
+static int do_load(RyInterp *in, uint64_t va, unsigned size, int sign, uint64_t *out) {
+    TransResult tr;
+    if (!mmu_translate(in, va, &tr)) {
+        in->fault_va = va;
+        return -1;
+    }
+    /* Device window (UART / GIC) takes priority over RAM. */
+    uint64_t dv;
+    if (mmu_device_read(in, tr.pa, size, &dv)) {
+        uint64_t v = dv;
+        if (sign) {
+            if (size == 1) v = (uint64_t)(int64_t)(int8_t)v;
+            else if (size == 2) v = (uint64_t)(int64_t)(int16_t)v;
+            else if (size == 4) v = (uint64_t)(int64_t)(int32_t)v;
+        }
+        *out = v;
+        return 0;
+    }
+    uint8_t *p = ptr_of(in, tr.pa, size);
+    if (!p) {
+        in->fault_va = va;
+        in->fault_pa = tr.pa;
+        return -1;
+    }
     uint64_t v = 0;
     memcpy(&v, p, size);
     if (sign) {
@@ -196,9 +217,25 @@ static int do_load(RyInterp *in, uint64_t addr, unsigned size, int sign, uint64_
     return 0;
 }
 
-static int do_store(RyInterp *in, uint64_t addr, unsigned size, uint64_t v) {
-    uint8_t *p = ptr_of(in, addr, size);
-    if (!p) return -1;
+static int do_store(RyInterp *in, uint64_t va, unsigned size, uint64_t v) {
+    TransResult tr;
+    if (!mmu_translate(in, va, &tr)) {
+        in->fault_va = va;
+        return -1;
+    }
+    if (mmu_device_write(in, tr.pa, size, v)) return 0;
+    if (tr.perm) {           /* write to a read-only page */
+        in->fault_va = va;
+        in->fault_pa = tr.pa;
+        in->perm_fault = 1;
+        return -1;
+    }
+    uint8_t *p = ptr_of(in, tr.pa, size);
+    if (!p) {
+        in->fault_va = va;
+        in->fault_pa = tr.pa;
+        return -1;
+    }
     memcpy(p, &v, size);
     return 0;
 }

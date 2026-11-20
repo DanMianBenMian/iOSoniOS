@@ -20,6 +20,7 @@
 
 #include "ry_engine.h"
 #include "ry_interp.h"
+#include "ry_macho.h"
 
 #if RY_HAVE_JIT
 #include "machine.h"
@@ -28,6 +29,8 @@
 #include "memop.h"
 #endif
 
+static void (*g_uart_sink)(char);
+static uint64_t g_kernel_entry;
 static int g_backend;                 /* RY_BACKEND_* */
 static int g_ready;
 
@@ -122,6 +125,7 @@ int ry_engine_init(uint64_t ram_bytes, int backend, RyEngineStatus *out) {
     if (!g_interp) { if (out) set_detail(out, "CPU 状态分配失败"); return -2; }
     g_interp->mem = g_ram;
     g_interp->mem_size = ram_bytes;
+    g_interp->uart_byte = g_uart_sink;
     if (out) out->stage = 2;
 
     g_backend = RY_BACKEND_INTERP;
@@ -270,5 +274,88 @@ void ry_engine_shutdown(void) {
 }
 
 int ry_engine_backend(void) { return g_backend; }
+
+uint64_t ry_engine_kernel_entry(void) { return g_kernel_entry; }
+
+int ry_engine_boot_kernel(const void *data, uint64_t len, uint64_t max_insns,
+                          RyEngineStatus *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!g_ready) { if (out) set_detail(out, "引擎未初始化"); return -1; }
+    if (g_backend != RY_BACKEND_INTERP) {
+        if (out) set_detail(out, "内核引导目前只在解释器后端可用");
+        return -2;
+    }
+
+    MachoInfo info;
+    uint64_t entry = 0;
+    int rc = macho_load_kernel((const uint8_t *)data, len, g_ram, g_ram_bytes, 0,
+                               &entry, &info);
+    if (rc != 0) {
+        if (out) set_detail(out, "Mach-O 解析失败 rc=%d", rc);
+        return rc;
+    }
+    g_kernel_entry = entry;
+
+    if (out) {
+        out->ok = 1;
+        out->ram_bytes = g_ram_bytes;
+        out->backend = g_backend;
+        set_detail(out, "载入 %d 段，__TEXT@0x%llx，入口 0x%llx%s%s",
+                   info.segments,
+                   (unsigned long long)info.text_vmaddr,
+                   (unsigned long long)entry,
+                   info.fileset ? "，fileset=" : "",
+                   info.fileset ? info.nested_name : "");
+    }
+
+    /* Start the CPU at the entry point with a zeroed x0 (boot args pointer). */
+    ry_interp_reset(g_interp, entry);
+    g_interp->cpu.el = 1;
+    g_interp->uart_byte = g_uart_sink;
+    int run = ry_interp_run(g_interp, 0, max_insns);
+
+    if (run == RY_ERR_UNSUPPORTED) {
+        if (out) set_detail(out, "执行 %llu 条后遇到未实现指令 0x%08x @ 0x%llx",
+                            (unsigned long long)g_interp->insns,
+                            g_interp->unsupported_insn,
+                            (unsigned long long)g_interp->unsupported_pc);
+    } else if (run == RY_ERR_MEM) {
+        if (out) set_detail(out, "执行 %llu 条后访存越界 va=0x%llx pa=0x%llx%s",
+                            (unsigned long long)g_interp->insns,
+                            (unsigned long long)g_interp->fault_va,
+                            (unsigned long long)g_interp->fault_pa,
+                            g_interp->perm_fault ? "（写只读页）" : "");
+    } else if (run == RY_ERR_LIMIT) {
+        if (out) set_detail(out, "已执行 %llu 条指令（到达上限）pc=0x%llx",
+                            (unsigned long long)g_interp->insns,
+                            (unsigned long long)g_interp->cpu.pc);
+    } else if (run == RY_ERR_SVC) {
+        if (out) set_detail(out, "执行 %llu 条后触发 SVC 0x%x @ 0x%llx",
+                            (unsigned long long)g_interp->insns,
+                            g_interp->svc_imm,
+                            (unsigned long long)g_interp->svc_pc);
+    } else if (run == RY_ERR_HALT) {
+        if (out) set_detail(out, "执行 %llu 条后停机（WFI/WFE/BRK）pc=0x%llx",
+                            (unsigned long long)g_interp->insns,
+                            (unsigned long long)g_interp->cpu.pc);
+    } else {
+        if (out) set_detail(out, "执行 %llu 条后退出 rc=%d pc=0x%llx",
+                            (unsigned long long)g_interp->insns, run,
+                            (unsigned long long)g_interp->cpu.pc);
+    }
+    return run;
+}
+
+void ry_engine_set_uart(void (*sink)(char)) {
+    g_uart_sink = sink;
+    if (g_interp) g_interp->uart_byte = sink;
+}
+
+void ry_engine_last_fault(uint64_t *va, uint64_t *pa, int *perm) {
+    if (!g_interp) { if (va) *va = 0; if (pa) *pa = 0; if (perm) *perm = 0; return; }
+    if (va) *va = g_interp->fault_va;
+    if (pa) *pa = g_interp->fault_pa;
+    if (perm) *perm = g_interp->perm_fault;
+}
 
 const char *ry_engine_detail(const RyEngineStatus *s) { return s->detail; }

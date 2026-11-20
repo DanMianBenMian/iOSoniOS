@@ -39,6 +39,23 @@ int ry_engine_run_at(uint64_t pc, uint64_t max_insns, RyEngineStatus *out);
 
 void ry_engine_shutdown(void);
 int ry_engine_backend(void);
+
+/* Guest UART output (kernel printk). Called for every byte the kernel writes.
+ * Set before ry_engine_run_at; pass NULL to discard. */
+void ry_engine_set_uart(void (*sink)(char));
+
+/* Loads a kernelcache into guest RAM and starts executing it. Returns 0 if the
+ * kernel began running, negative if the image could not be loaded. The stop
+ * reason and the first fault are reported through `out`. */
+int ry_engine_boot_kernel(const void *data, uint64_t len, uint64_t max_insns,
+                          RyEngineStatus *out);
+
+/* Where the loaded kernel's entry point ended up (0 before a load). */
+uint64_t ry_engine_kernel_entry(void);
+
+/* Last memory fault the interpreter hit (virtual, physical, and whether it was
+ * a write to a read-only page). Zeroed when there has been no fault. */
+void ry_engine_last_fault(uint64_t *va, uint64_t *pa, int *perm);
 const char *ry_engine_detail(const RyEngineStatus *s);
 
 #ifdef __cplusplus

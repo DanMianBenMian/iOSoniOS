@@ -92,12 +92,59 @@ final class BootEngine: ObservableObject {
             stage = "内核解析"
             await tick()
             await parseKernel(kernel)
+
+            stage = "内核执行"
+            await tick()
+            await runKernel(kernel)
         }
 
         stage = "已停止"
         running = false
         append("—— 启动流程结束 ——", .info)
         _ = dtreeSize
+    }
+
+    /// Loads the kernelcache into guest RAM and starts executing it.
+    private func runKernel(_ kernel: Data) async {
+        // Route guest UART output into the app log, so kernel printk shows up.
+        ry_engine_set_uart { ch in
+            BootEngine.uartSink(ch)
+        }
+        var status = RyEngineStatus()
+        let rc = kernel.withUnsafeBytes { raw -> Int32 in
+            guard let base = raw.baseAddress else { return -1 }
+            // 8M instructions is about a second of interpreter time.
+            return ry_engine_boot_kernel(base, UInt64(kernel.count), 8_000_000, &status)
+        }
+        let detail = String(cString: ry_engine_detail(&status))
+        if rc == 0 {
+            append("内核已运行：\(detail)", .ok)
+        } else {
+            append("内核执行停止 (rc=\(rc))：\(detail)",
+                   rc == Int32(RY_ERR_LIMIT) ? .info : .warn)
+        }
+        let entry = ry_engine_kernel_entry()
+        append(String(format: "内核入口 0x%llx", entry), .info)
+    }
+
+    /// UART sink: accumulate bytes into lines and emit them as guest log lines.
+    private static var uartBuffer = ""
+    fileprivate static func uartSink(_ ch: CChar) {
+        let scalar = UnicodeScalar(UInt8(bitPattern: ch))
+        if scalar == "\n" {
+            let line = uartBuffer
+            uartBuffer = ""
+            if !line.isEmpty { RyLog.log("tty", line, level: .guest) }
+        } else if scalar == "\r" {
+            // ignore
+        } else {
+            uartBuffer.append(Character(scalar))
+            if uartBuffer.count > 512 {
+                let line = uartBuffer
+                uartBuffer = ""
+                RyLog.log("tty", line, level: .guest)
+            }
+        }
     }
 
     private func tick() async {

@@ -48,7 +48,24 @@ typedef struct {
     uint64_t excl_addr;
     uint32_t excl_size;
     uint64_t excl_val;
+
+    /* Guest UART output (kernel printk). Set by the host before running. */
+    void (*uart_byte)(char);
+    uint64_t fault_pa;      /* last faulting physical address */
+    uint64_t fault_va;      /* last faulting virtual address */
+    int perm_fault;         /* last access was a write to a read-only page */
 } RyInterp;
+
+/* One translation descriptor walk. */
+typedef struct {
+    uint64_t pa;
+    int ok;
+    int perm;      /* 1 = read-only */
+} TransResult;
+
+int mmu_translate(RyInterp *in, uint64_t va, TransResult *out);
+int mmu_device_read(RyInterp *in, uint64_t pa, unsigned size, uint64_t *out);
+int mmu_device_write(RyInterp *in, uint64_t pa, unsigned size, uint64_t v);
 
 #ifdef __cplusplus
 extern "C" {
