@@ -49,8 +49,8 @@ struct GuestScreenView: View {
         let count = w * h * 4
 
         // Copy C bytes into a CFData so the CGImage owns its storage.
-        let data = CFDataCreate(nil, base, count)
-        guard let provider = CGDataProvider(data: data) else { return }
+        guard let data = CFDataCreate(nil, base, count),
+              let provider = CGDataProvider(data: data) else { return }
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let imageInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
         guard let cg = CGImage(width: w, height: h,
