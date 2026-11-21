@@ -2,6 +2,12 @@
 #define RY_ENGINE_H
 
 #include <stdint.h>
+#include <stddef.h>
+
+/* Guest framebuffer dimensions (kept here so Swift can read them via the
+ * accessors below without needing the C macros). */
+#define RY_FB_W 1024
+#define RY_FB_H 768
 
 /* Which backend executed the guest. */
 enum {
@@ -57,6 +63,15 @@ uint64_t ry_engine_kernel_entry(void);
  * a write to a read-only page). Zeroed when there has been no fault. */
 void ry_engine_last_fault(uint64_t *va, uint64_t *pa, int *perm);
 const char *ry_engine_detail(const RyEngineStatus *s);
+
+/* Guest framebuffer readback for the on-screen display.
+ * Returns a pointer to RY_FB_W*RY_FB_H*4 RGBA8888 bytes (valid until shutdown),
+ * or NULL before init. The UI copies this into a CGImage each frame. */
+const uint8_t *ry_engine_fb_pixels(void);
+unsigned       ry_engine_fb_width(void);
+unsigned       ry_engine_fb_height(void);
+int            ry_engine_fb_is_test(void);   /* 1 = still showing test pattern */
+void           ry_engine_fb_redraw_test(void);
 
 #ifdef __cplusplus
 }

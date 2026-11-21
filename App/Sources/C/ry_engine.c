@@ -21,6 +21,7 @@
 #include "ry_engine.h"
 #include "ry_interp.h"
 #include "ry_macho.h"
+#include "ry_framebuffer.h"
 
 #if RY_HAVE_JIT
 #include "machine.h"
@@ -98,6 +99,7 @@ int ry_engine_init(uint64_t ram_bytes, int backend, RyEngineStatus *out) {
 
         g_backend = RY_BACKEND_JIT;
         g_ready = 1;
+        ry_fb_init();
         if (out) {
             out->ok = 1;
             out->ram_bytes = ram_bytes;
@@ -130,6 +132,7 @@ int ry_engine_init(uint64_t ram_bytes, int backend, RyEngineStatus *out) {
 
     g_backend = RY_BACKEND_INTERP;
     g_ready = 1;
+    ry_fb_init();
     if (out) {
         out->ok = 1;
         out->ram_bytes = ram_bytes;
@@ -268,6 +271,7 @@ void ry_engine_shutdown(void) {
 #endif
     if (g_interp) { free(g_interp); g_interp = NULL; }
     if (g_ram) { free(g_ram); g_ram = NULL; }
+    ry_fb_shutdown();
     g_ready = 0;
     g_backend = RY_BACKEND_NONE;
     g_ram_bytes = 0;
@@ -359,3 +363,10 @@ void ry_engine_last_fault(uint64_t *va, uint64_t *pa, int *perm) {
 }
 
 const char *ry_engine_detail(const RyEngineStatus *s) { return s->detail; }
+
+/* ---- framebuffer readback ---- */
+const uint8_t *ry_engine_fb_pixels(void) { return ry_fb_pixels(); }
+unsigned ry_engine_fb_width(void)  { return RY_FB_WIDTH; }
+unsigned ry_engine_fb_height(void) { return RY_FB_HEIGHT; }
+int ry_engine_fb_is_test(void) { return ry_fb_is_test_pattern(); }
+void ry_engine_fb_redraw_test(void) { ry_fb_draw_test_pattern(); }

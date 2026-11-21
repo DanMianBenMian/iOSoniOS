@@ -9,7 +9,8 @@ struct VMView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var keysExpanded = false      // collapsed by default
-    @State private var showLog = true
+    @State private var viewMode: ViewMode = .screen   // guest screen is the star
+    private enum ViewMode { case screen, console }
 
     init(config: VMConfig) {
         self.config = config
@@ -24,7 +25,11 @@ struct VMView: View {
                 topBar
                 progressPanel
                 if let issue = engine.issue { issueCard(issue) }
-                console
+                if viewMode == .screen {
+                    GuestScreenView()
+                } else {
+                    console
+                }
             }
 
             VStack {
@@ -54,9 +59,13 @@ struct VMView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(Theme.VM.textDim)
             Spacer()
-            glassIcon(showLog ? "text.alignleft" : "text.alignleft", active: showLog) {
-                withAnimation(.easeOut(duration: 0.2)) { showLog.toggle() }
+            glassIcon(viewMode == .screen ? "display" : "text.alignleft",
+                      active: true) {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    viewMode = (viewMode == .screen) ? .console : .screen
+                }
             }
+            .accessibilityLabel(viewMode == .screen ? "查看日志" : "查看屏幕")
             glassIcon("xmark", active: false) {
                 engine.shutdown()
                 dismiss()
@@ -275,7 +284,6 @@ struct VMView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 140)
             }
-            .opacity(showLog ? 1 : 0)
             .onChange(of: engine.lines.count) { _ in
                 if let last = engine.lines.last {
                     withAnimation(.easeOut(duration: 0.2)) {

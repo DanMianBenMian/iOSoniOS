@@ -18,6 +18,7 @@
 #include <stdio.h>
 
 #include "ry_interp.h"
+#include "ry_framebuffer.h"
 
 #define BIT(x, n)       (((x) >> (n)) & 1u)
 #define BITS(x, hi, lo) (((x) >> (lo)) & ((1u << ((hi) - (lo) + 1)) - 1u))
@@ -121,8 +122,10 @@ int mmu_translate(RyInterp *in, uint64_t va, TransResult *out) {
     if (walk_table(in, root, levels, va, out)) return 1;
 
     /* Fall back: if the walk failed and the address lands in RAM, allow it.
-     * Early boot touches a few addresses before the tables are complete. */
-    if (va < in->mem_size) {
+     * Early boot touches a few addresses before the tables are complete.
+     * The framebuffer MMIO window is also always reachable. */
+    if (va < in->mem_size ||
+        (va >= RY_FB_WINDOW_BASE && va < RY_FB_WINDOW_END)) {
         out->ok = 1;
         out->pa = va;
         return 1;
@@ -150,6 +153,7 @@ int mmu_device_read(RyInterp *in, uint64_t pa, unsigned size, uint64_t *out) {
         *out = 0;                                /* no interrupts pending */
         return 1;
     }
+    if (ry_fb_window_read(pa, size, out)) return 1;
     return 0;
 }
 
@@ -167,5 +171,6 @@ int mmu_device_write(RyInterp *in, uint64_t pa, unsigned size, uint64_t v) {
     if (pa >= GIC_BASE && pa < GIC_BASE + GIC_SIZE) {
         return 1;                                /* ignore */
     }
+    if (ry_fb_window_write(pa, size, v)) return 1;
     return 0;
 }
