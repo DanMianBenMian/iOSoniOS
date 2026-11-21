@@ -9,7 +9,6 @@ struct DownloadsView: View {
 
     @StateObject private var downloader = FirmwareDownloader()
     @State private var localFiles: [String] = []
-    @State private var showImporter = false
     @State private var importMessage: String?
     @State private var extracting = false
     @State private var extractMessage: String?
@@ -37,11 +36,6 @@ struct DownloadsView: View {
         .onAppear(perform: scanLocal)
         .onChange(of: downloader.phase) { phase in
             if case .finished = phase { scanLocal() }
-        }
-        .fileImporter(isPresented: $showImporter,
-                      allowedContentTypes: [.data],
-                      allowsMultipleSelection: false) { result in
-            handleImport(result)
         }
         .sheet(item: $notice) { kind in
             StorageNoticeSheet(kind: kind) {
@@ -167,7 +161,9 @@ struct DownloadsView: View {
 
     private var importCard: some View {
         Button {
-            showImporter = true
+            DocPicker.present(asCopy: false) { result in
+                handlePickedURL(result)
+            }
         } label: {
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -327,13 +323,14 @@ struct DownloadsView: View {
         localFiles = names.filter { $0.hasSuffix(".ipsw") || $0.hasSuffix(".ipa") }.sorted()
     }
 
-    private func handleImport(_ result: Result<[URL], Error>) {
+    private func handlePickedURL(_ result: Result<URL, Error>) {
         switch result {
-        case .success(let urls):
-            guard let src = urls.first else { return }
+        case .success(let src):
+            // DocPicker opened the ORIGINAL with a security scope; close it when
+            // the copy into Documents finishes (matching DocPicker.deliver).
+            defer { src.stopAccessingSecurityScopedResource() }
             let dest = RyLog.documentsURL.appendingPathComponent(src.lastPathComponent)
-            let needsScope = src.startAccessingSecurityScopedResource()
-            defer { if needsScope { src.stopAccessingSecurityScopedResource() } }
+            importMessage = "正在导入 \(src.lastPathComponent)…"
             do {
                 if FileManager.default.fileExists(atPath: dest.path) {
                     try FileManager.default.removeItem(at: dest)
@@ -347,7 +344,8 @@ struct DownloadsView: View {
                 RyLog.log("import", "failed: \(error.localizedDescription)", level: .error)
             }
         case .failure(let error):
-            importMessage = "导入取消或失败：\(error.localizedDescription)"
+            importMessage = "导入失败：\(error.localizedDescription)"
+            RyLog.log("import", "picker failed: \(error.localizedDescription)", level: .error)
         }
     }
 }
