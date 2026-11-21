@@ -145,7 +145,13 @@ int ry_interp_step(RyInterp *in) {
         switch (opc) {
         case 0: cpu->pc = target; return RY_OK;                        /* BR */
         case 1: cpu->x[30] = pc + 4; cpu->pc = target; return RY_OK;    /* BLR */
-        case 2: cpu->pc = target; return RY_OK;                        /* RET */
+        case 2:                                                        /* RET */
+            /* Bare-metal: LR is zero, so RET means "program returned". Halt
+             * instead of jumping to address 0 and executing uninitialised
+             * zeros as instructions (which showed up as a bogus unsupported
+             * opcode 0x00000000 at pc=0x0 in the selftest). */
+            if (target == 0) return RY_ERR_HALT;
+            cpu->pc = target; return RY_OK;
         case 4: case 5:                                                /* ERET / DRPS */
             cpu->pc = cpu->elr_el1 ? cpu->elr_el1 : target;
             cpu->el = (unsigned)((cpu->spsr_el1 >> 2) & 3);

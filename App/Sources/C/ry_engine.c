@@ -187,7 +187,9 @@ int ry_engine_selftest(RyEngineStatus *out) {
     int rc = ry_interp_run(g_interp, 0, 100000);
     uint64_t sum = g_interp->cpu.x[1], loaded = g_interp->cpu.x[4];
     if (out) {
-        out->ok = (rc == RY_OK && sum == 55 && loaded == 0x152);
+        /* RY_ERR_HALT is the expected end: the bare-metal test ends with RET
+         * and LR==0, which the interpreter treats as "program returned". */
+        out->ok = ((rc == RY_OK || rc == RY_ERR_HALT) && sum == 55 && loaded == 0x152);
         out->sample_result = (uint32_t)sum;
         out->ram_bytes = g_ram_bytes;
         out->backend = g_backend;

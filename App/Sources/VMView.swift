@@ -10,6 +10,7 @@ struct VMView: View {
 
     @State private var keysExpanded = false      // collapsed by default
     @State private var viewMode: ViewMode = .screen   // guest screen is the star
+    @State private var rawEntries: [RyLog.Entry] = []
     private enum ViewMode { case screen, console }
 
     init(config: VMConfig) {
@@ -46,6 +47,12 @@ struct VMView: View {
         .persistentSystemOverlays(.hidden)
         .onAppear { engine.start() }
         .onDisappear { engine.shutdown() }
+        .task {
+            while !Task.isCancelled {
+                rawEntries = RyLog.recent(1000)
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+        }
     }
 
     // MARK: - Top bar
@@ -267,30 +274,42 @@ struct VMView: View {
 
     // MARK: - Console
 
+    /// Raw low-level log, byte-for-byte what lands in iosonios.log:
+    /// `[time] LEVEL tag: message`. No app-authored Chinese narration.
     private var console: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 3) {
-                    ForEach(engine.lines) { line in
-                        Text(line.text)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundColor(color(for: line.kind))
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(rawEntries) { e in
+                        Text("[\(e.time)] \(e.level.uppercased()) \(e.tag): \(e.message)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(rawColor(e.level))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .id(line.id)
+                            .id(e.id)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 12)
                 .padding(.top, 8)
                 .padding(.bottom, 140)
             }
-            .onChange(of: engine.lines.count) { _ in
-                if let last = engine.lines.last {
+            .onChange(of: rawEntries.count) { _ in
+                if let last = rawEntries.last {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
                 }
             }
+        }
+    }
+
+    private func rawColor(_ level: String) -> Color {
+        switch level {
+        case "error": return Theme.VM.danger
+        case "warn":  return Theme.VM.warn
+        case "guest": return Theme.VM.accent
+        case "info":  return Theme.VM.text
+        default:      return Theme.VM.textDim
         }
     }
 

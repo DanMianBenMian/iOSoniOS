@@ -96,8 +96,30 @@ int macho_load_kernel(const uint8_t *data, uint64_t len, uint8_t *ram, uint64_t 
     const MachHeader64 *mh = (const MachHeader64 *)(data + base);
     if (mh->magic != MH_MAGIC_64) return -2;
 
+    /* XNU kernelcache segments use high virtual addresses (e.g.
+     * 0xfffffff00a...). Copying them at vmaddr+0 lands outside guest RAM, so
+     * every segment copy was silently skipped and the entry PC pointed past
+     * the end of RAM -> "executed 0 instructions, RY_ERR_PC". When the caller
+     * passes load_bias=0, derive one that relocates __TEXT to a low physical
+     * address inside RAM. */
+    const uint64_t KERNEL_PHYS_BASE = 0x400000ull;   /* 4 MiB, inside 1-3 GiB RAM */
+    uint64_t text_vm_raw = 0;
+    for (uint64_t off = base + sizeof(MachHeader64), i = 0;
+         i < mh->ncmds && off + 8 <= len; i++) {
+        const uint8_t *cmd = data + off;
+        uint32_t cmdsize = rd32(cmd + 4);
+        if (cmdsize < 8 || off + cmdsize > len) break;
+        if (rd32(cmd) == LC_SEGMENT_64 && cmdsize >= sizeof(SegmentCommand64)) {
+            const SegmentCommand64 *sg = (const SegmentCommand64 *)cmd;
+            if (strcmp(sg->segname, "__TEXT") == 0) { text_vm_raw = sg->vmaddr; break; }
+        }
+        off += cmdsize;
+    }
+    if (load_bias == 0 && text_vm_raw != 0)
+        load_bias = KERNEL_PHYS_BASE - text_vm_raw;   /* wraps: negative offset */
+
     uint64_t entry = 0;
-    uint64_t text_vm = 0;
+    uint64_t text_vm = 0;       /* relocated __TEXT (physical) */
     int segs = 0;
 
     uint64_t off = base + sizeof(MachHeader64);
@@ -123,7 +145,7 @@ int macho_load_kernel(const uint8_t *data, uint64_t len, uint8_t *ram, uint64_t 
             if (info) info->total_vmsize += sg->vmsize;
         } else if (c == LC_MAIN && cmdsize >= 24) {
             uint64_t entryoff = rd64(cmd + 8);
-            entry = (text_vm ? text_vm : load_bias) + entryoff;
+            entry = (text_vm ? text_vm : KERNEL_PHYS_BASE) + entryoff;
         } else if (c == LC_UNIXTHREAD) {
             /* ARM_THREAD_STATE64: flavor 6, count 68, x0..x28, fp, lr, sp, pc, cpsr */
             const uint8_t *st = cmd + 16;
@@ -135,7 +157,7 @@ int macho_load_kernel(const uint8_t *data, uint64_t len, uint8_t *ram, uint64_t 
         off += cmdsize;
     }
 
-    if (entry == 0) entry = text_vm + 0x1000;   /* conservative fallback */
+    if (entry == 0) entry = (text_vm ? text_vm : KERNEL_PHYS_BASE) + 0x1000;
     *entry_out = entry;
     if (info) {
         info->segments = segs;
