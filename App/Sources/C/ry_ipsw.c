@@ -221,7 +221,16 @@ static uint8_t *inflate_entry(FILE *f, uint64_t local_off, uint64_t comp_size,
 /* Walk the IM4P DER wrapper and return a pointer to the OCTET STRING payload. */
 static const uint8_t *im4p_payload(const uint8_t *d, size_t len, size_t *pay_len) {
     if (len < 12) return NULL;
-    if (memcmp(d + 6, "IM4P", 4) != 0) return NULL;
+    /* The outer SEQUENCE's length can use 1/2/4 length-of-length bytes, so the
+     * "IM4P" IA5String is NOT at a fixed offset (real 27b2 kernelcache:
+     * 30 84 <4 len> 16 04 "IM4P" ... — magic sits at byte 8, not 6).
+     * Search the DER header window instead of assuming a fixed position. */
+    size_t scan = len < 32 ? len : 32;
+    int has_im4p = 0;
+    for (size_t k = 0; k + 4 <= scan; k++) {
+        if (memcmp(d + k, "IM4P", 4) == 0) { has_im4p = 1; break; }
+    }
+    if (!has_im4p) return NULL;
 
     size_t i = 2;
     if (d[1] == 0x84) i = 6;

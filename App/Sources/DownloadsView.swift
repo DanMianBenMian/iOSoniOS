@@ -13,6 +13,13 @@ struct DownloadsView: View {
     @State private var extracting = false
     @State private var extractMessage: String?
     @State private var notice: StorageNoticeSheet.Kind? = nil
+    @State private var showExtractPicker = false
+    @State private var pendingExtractName: String? = nil
+
+    /// All local IPSWs the user can choose to extract a kernel from.
+    private var ipswFiles: [String] {
+        localFiles.filter { $0.hasSuffix(".ipsw") }
+    }
 
     var body: some View {
         ZStack {
@@ -42,11 +49,21 @@ struct DownloadsView: View {
                 switch kind {
                 case .download: startDownload()
                 case .extract:
-                    if let name = localFiles.first(where: { $0.hasSuffix(".ipsw") }) {
-                        extractBootkc(name)
-                    }
+                    if let name = pendingExtractName { extractBootkc(name) }
                 }
             }
+        }
+        .confirmationDialog("选择要提取内核的固件", isPresented: $showExtractPicker,
+                            titleVisibility: .visible) {
+            ForEach(ipswFiles, id: \.self) { name in
+                Button(name) {
+                    pendingExtractName = name
+                    notice = .extract
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("从选中的 IPSW 里解出 kernelcache，生成 bootkc。")
         }
     }
 
@@ -191,14 +208,14 @@ struct DownloadsView: View {
 
     /// Pulls kernelcache out of an imported IPSW: zip -> im4p -> LZFSE -> bootkc.
     private var extractCard: some View {
-        let ipsw = localFiles.first { $0.hasSuffix(".ipsw") }
+        let hasIPSW = !ipswFiles.isEmpty
         let hasBootkc = FileManager.default.fileExists(
             atPath: RyLog.documentsURL.appendingPathComponent("bootkc").path)
 
         return VStack(alignment: .leading, spacing: 10) {
             Button {
-                guard ipsw != nil else { return }
-                notice = .extract
+                guard hasIPSW else { return }
+                showExtractPicker = true
             } label: {
                 HStack(spacing: 12) {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
@@ -210,9 +227,9 @@ struct DownloadsView: View {
                         Text("从 IPSW 提取内核").font(.system(size: 14, weight: .medium))
                             .foregroundColor(Theme.text)
                         Text(extractMessage
-                             ?? (ipsw == nil
-                                 ? "先导入或下载一个 .ipsw"
-                                 : "解出 kernelcache → bootkc"))
+                             ?? (hasIPSW
+                                 ? "选择固件 → 解出 kernelcache → bootkc"
+                                 : "先导入或下载一个 .ipsw"))
                             .font(.system(size: 11))
                             .foregroundColor(messageTint(extractMessage))
                     }
@@ -229,8 +246,8 @@ struct DownloadsView: View {
                 .cornerRadius(12)
             }
             .buttonStyle(.plain)
-            .disabled(ipsw == nil || extracting)
-            .opacity(ipsw == nil ? 0.55 : 1)
+            .disabled(!hasIPSW || extracting)
+            .opacity(!hasIPSW ? 0.55 : 1)
         }
     }
 

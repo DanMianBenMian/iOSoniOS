@@ -68,11 +68,11 @@ struct ConfigView: View {
                     .accessibilityLabel("创建虚拟机")
                 }
             }
-            .confirmationDialog("还没有导入固件", isPresented: $showFirmwarePrompt, titleVisibility: .visible) {
+            .confirmationDialog("还没有提取内核", isPresented: $showFirmwarePrompt, titleVisibility: .visible) {
                 Button("跳过，先创建（测试版）") { finishCreate() }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("没有 IPSW 就无法真正启动内核。测试阶段可以跳过，先体验界面和流程。")
+                Text("虚拟机会从 bootkc（内核）启动，不是完整 IPSW。请到下载页导入固件并提取内核。测试阶段可以先跳过。")
             }
         }
         .onChange(of: ramIndex) { _ in sync() }
@@ -196,13 +196,13 @@ struct ConfigView: View {
     }
 
     private var firmwareCard: some View {
-        SettingRow(icon: "shippingbox.fill", title: "固件",
-                   subtitle: existingIPSW() != nil ? (existingIPSW() ?? "") : "未导入（测试版可跳过）",
-                   iconColor: Theme.iconFirmware) {
+        SettingRow(icon: "cpu", title: "内核",
+                   subtitle: hasKernel() ? "已就绪" : "未提取（测试版可跳过）",
+                   iconColor: Theme.iconBoot) {
             NavigationLink {
                 DownloadsView()
             } label: {
-                Text("前往下载")
+                Text("前往选取")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.accent)
             }
@@ -210,10 +210,16 @@ struct ConfigView: View {
         }
     }
 
+    /// The VM boots from the extracted kernelcache (bootkc), not the full IPSW.
+    private func hasKernel() -> Bool {
+        FileManager.default.fileExists(
+            atPath: RyLog.documentsURL.appendingPathComponent("bootkc").path)
+    }
+
     private func attemptCreate() {
         sync()
         config.save()
-        if existingIPSW() != nil {
+        if hasKernel() {
             finishCreate()
         } else {
             showFirmwarePrompt = true
@@ -222,12 +228,6 @@ struct ConfigView: View {
 
     private func finishCreate() {
         onCreate(config)
-    }
-
-    private func existingIPSW() -> String? {
-        let docs = RyLog.documentsURL
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: docs.path)) ?? []
-        return names.first { $0.hasSuffix(".ipsw") }
     }
 
     private func sync() {
